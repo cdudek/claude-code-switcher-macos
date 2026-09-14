@@ -13,6 +13,7 @@ cd "$(dirname "$0")/.."
 
 APP="dist/Claude Switcher.app"
 VOL="Claude Switcher"
+if [ "${1:-}" = "--capture" ]; then CAPTURE=1; shift; fi
 OUT="${1:-dist/Claude-Switcher.dmg}"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
@@ -65,6 +66,16 @@ DEV=$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | grep '^/dev/' | he
 MOUNT="/Volumes/$VOL"
 sleep 2
 
+# CI has no logged-in Finder, so `tell application "Finder"` cannot lay out a
+# window there. The layout lives in the volume's .DS_Store, which is just a file:
+# generate it once on a machine with a desktop, commit it, and copy it in
+# everywhere else. Run `scripts/make-dmg.sh --capture` after changing positions.
+DS="resources/dmg-DS_Store"
+if [ "${CAPTURE:-0}" != "1" ] && [ -f "$DS" ]; then
+  echo "Applying the saved window layout"
+  cp "$DS" "$MOUNT/.DS_Store"
+else
+
 echo "Laying out the window"
 osascript <<'APPLESCRIPT'
 tell application "Finder"
@@ -90,6 +101,8 @@ tell application "Finder"
 end tell
 APPLESCRIPT
 
+fi
+
 # Finder records the window settings in .DS_Store. Asking Finder to read the
 # background back is unreliable, but the file it writes is not: a window with a
 # picture background carries a BKGD record naming the image. Without this gate a
@@ -100,6 +113,11 @@ if ! grep -aq "background.png" "$MOUNT/.DS_Store" 2>/dev/null; then
   exit 1
 fi
 echo "  background: applied"
+
+if [ "${CAPTURE:-0}" = "1" ]; then
+  cp "$MOUNT/.DS_Store" "$DS"
+  echo "  saved the layout to $DS - commit it so CI can use it"
+fi
 
 chmod -Rf go-w "$MOUNT" 2>/dev/null || true
 sync
