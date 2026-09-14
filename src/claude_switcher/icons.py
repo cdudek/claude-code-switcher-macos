@@ -9,11 +9,15 @@ scale from the @2x / @3x suffixes, so only the 22 px path is ever named.
 from pathlib import Path
 
 ICONS_DIR = Path(__file__).parent / "resources" / "icons"
-DEFAULT_ICON = "twin-spark"
+DEFAULT_ICON = "brackets"
 
 # slug -> the name shown in the menu. Order is the menu order: the two families
 # worth choosing between first, then the rest.
 ICON_LABELS: dict[str, str] = {
+    # The app's own mark, reduced to a template image. The trailing chevron keeps
+    # its 0.42 opacity, which macOS tints lighter - the same relationship the
+    # colour logo has, rather than a flat silhouette of it.
+    "brackets": "Brackets (app mark)",
     "twin-spark": "Twin spark",
     "spark-tight": "Twin spark, bold",
     "spark-outline": "Spark outline",
