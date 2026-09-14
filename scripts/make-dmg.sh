@@ -115,11 +115,23 @@ fi
 # background back is unreliable, but the file it writes is not: a window with a
 # picture background carries a BKGD record naming the image. Without this gate a
 # broken AppleScript ships an image with no drag arrow and nobody notices.
-if ! grep -aq "background.png" "$MOUNT/.DS_Store" 2>/dev/null; then
+# A byte search, not grep: BSD grep's behaviour on a binary file depends on the
+# locale, and "did these exact bytes survive" is the actual question.
+if ! python3 - "$MOUNT/.DS_Store" "$DS" <<'PY'
+import hashlib, pathlib, sys
+live, saved = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+if not live.is_file():
+    print(f"  no .DS_Store at {live}", file=sys.stderr); sys.exit(1)
+data = live.read_bytes()
+print(f"  .DS_Store {len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()[:16]}")
+if saved.is_file():
+    ref = saved.read_bytes()
+    print(f"  saved     {len(ref)} bytes, sha256 {hashlib.sha256(ref).hexdigest()[:16]}"
+          f"  {'IDENTICAL' if ref == data else 'DIFFERS'}")
+sys.exit(0 if b"background.png" in data else 1)
+PY
+then
   echo "ERROR: the window background was not applied - the image would ship without its drag arrow" >&2
-  echo "  mount:    $MOUNT" >&2
-  echo "  .DS_Store: $(ls -l "$MOUNT/.DS_Store" 2>&1)" >&2
-  echo "  saved layout: $(ls -l "$DS" 2>&1)" >&2
   hdiutil detach "$DEV" -quiet || true
   exit 1
 fi
