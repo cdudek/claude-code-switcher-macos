@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from claude_switcher import __version__
 from claude_switcher import keychain
 from claude_switcher.codex_core import (
     CodexCredentialsExpiredError,
@@ -70,7 +71,7 @@ def _fetch_codex_usage_once(creds_json: str) -> dict | None:
         req.add_header("Authorization", f"Bearer {token}")
         req.add_header("ChatGPT-Account-Id", account_id)
         req.add_header("Accept", "application/json")
-        req.add_header("User-Agent", "claude-switcher/0.4.3")
+        req.add_header("User-Agent", f"claude-switcher/{__version__}")
 
         try:
             with urlopen(req, timeout=10) as resp:

@@ -1,5 +1,6 @@
 """macOS menu bar application using rumps."""
 
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -31,9 +32,11 @@ from claude_switcher.config import (
     get_active_account,
     load_settings,
     set_auto_switch_enabled,
+    set_auto_update,
     set_icon,
     DEFAULT_CONFIG_PATH,
 )
+from claude_switcher import updater
 from claude_switcher.icons import ICON_LABELS, icon_path, is_known
 from claude_switcher.core import (
     check_claude_cli,
@@ -52,6 +55,8 @@ PROVIDER_LABELS = {
     "codex": "Codex CLI",
 }
 AUTO_SWITCH_COOLDOWN_SECONDS = 60
+UPDATE_CHECK_INTERVAL_SECONDS = 6 * 60 * 60
+UPDATE_CHECK_DELAY_SECONDS = 20  # let the app settle before touching the network
 
 # rumps.alert maps its three buttons onto Cocoa's return codes: ok -> 1,
 # other -> -1, cancel -> 0. Naming them keeps the dialog handler readable.
@@ -102,6 +107,12 @@ class ClaudeSwitcherApp(rumps.App):
         self._fetch_all_usage()
         self._auto_switch_timer = rumps.Timer(self._on_periodic_usage_refresh, 300)
         self._auto_switch_timer.start()
+        self._update_in_progress = False
+        self._update_timer = rumps.Timer(self._on_periodic_update_check, UPDATE_CHECK_INTERVAL_SECONDS)
+        self._update_timer.start()
+        # The first tick of a rumps.Timer fires immediately; defer the launch
+        # check so a cold start is not competing with the usage fetches.
+        threading.Timer(UPDATE_CHECK_DELAY_SECONDS, self._check_for_update, [False]).start()
 
     def _first_launch(self):
         """Import existing Claude and Codex accounts on first launch."""
@@ -165,6 +176,7 @@ class ClaudeSwitcherApp(rumps.App):
         self.menu.add(rumps.separator)
         self._add_auto_switch_menu()
         self._add_icon_menu()
+        self._add_update_menu()
         self.menu.add(rumps.MenuItem("\u271A  Add Claude account...", callback=self._on_add_claude_account))
         self.menu.add(rumps.MenuItem("\u271A  Add Codex account...", callback=self._on_add_codex_account))
         self.menu.add(rumps.MenuItem("\u21BB  Refresh usage", callback=self._on_refresh_usage))
@@ -213,6 +225,95 @@ class ClaudeSwitcherApp(rumps.App):
         self.icon = icon_path(slug)
         self.template = True
         self._rebuild_menu()
+
+    def _add_update_menu(self):
+        version = updater.current_version()
+        menu = rumps.MenuItem(f"\u2191  Updates (v{version})")
+        menu.add(rumps.MenuItem("Check now...", callback=self._on_check_for_update))
+        auto = rumps.MenuItem("Check automatically", callback=self._on_toggle_auto_update)
+        auto.state = 1 if load_settings(self.config_path).auto_update else 0
+        menu.add(auto)
+        self.menu.add(menu)
+
+    def _on_toggle_auto_update(self, sender):
+        set_auto_update(not bool(sender.state), self.config_path)
+        self._rebuild_menu()
+
+    def _on_check_for_update(self, _):
+        """Menu item: say something either way, because the user asked."""
+        self._check_for_update(announce_up_to_date=True)
+
+    def _on_periodic_update_check(self, _):
+        self._check_for_update(announce_up_to_date=False)
+
+    def _check_for_update(self, announce_up_to_date: bool):
+        """Look for a newer release, and offer it.
+
+        The background check is silent unless there is something to install; an
+        explicit "Check now" says so either way. Never installs without asking -
+        the download is unsigned, and swapping a running app under someone is not
+        a thing to do quietly.
+        """
+        if self._update_in_progress:
+            return
+        if not announce_up_to_date and not load_settings(self.config_path).auto_update:
+            return
+        self._update_in_progress = True
+
+        def _work():
+            found = error = None
+            try:
+                found = updater.check_for_update()
+            except Exception as exc:
+                error = str(exc)
+
+            def _finish():
+                self._update_in_progress = False
+                if error and announce_up_to_date:
+                    rumps.alert(title="Could not check for updates", message=error)
+                elif found:
+                    self._offer_update(*found)
+                elif announce_up_to_date:
+                    rumps.alert(
+                        title="You are up to date",
+                        message=f"Claude Switcher {updater.current_version()} is the newest release.",
+                    )
+
+            _on_main_thread(_finish)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _offer_update(self, version: str, url: str, notes: str) -> None:
+        body = f"Claude Switcher {version} is available. You have {updater.current_version()}."
+        if notes.strip():
+            body += "\n\n" + notes.strip()[:600]
+        body += "\n\nInstalling replaces the app and restarts it. The version you have now goes to the Trash."
+        if rumps.alert(title="Update available", message=body,
+                       ok="Install and restart", cancel="Later") != ALERT_OK:
+            return
+
+        self._update_in_progress = True
+        staging = Path(tempfile.mkdtemp(prefix="cs-update-"))
+
+        def _work():
+            error = staged = None
+            try:
+                staged = updater.download_update(url, staging)
+            except Exception as exc:
+                error = str(exc)
+
+            def _finish():
+                self._update_in_progress = False
+                if error or staged is None:
+                    updater.cleanup(staging)
+                    rumps.alert(title="Update failed", message=error or "The download was unusable.")
+                    return
+                updater.install_update(staged)
+                rumps.quit_application()
+
+            _on_main_thread(_finish)
+
+        threading.Thread(target=_work, daemon=True).start()
 
     def _add_provider_section(self, provider: str, accounts):
         header = rumps.MenuItem(f"\u2500\u2500 {PROVIDER_LABELS[provider]} \u2500\u2500")

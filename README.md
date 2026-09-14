@@ -35,20 +35,69 @@ Claude Switcher stores account backups in macOS Keychain and swaps the active CL
 
 ## Install
 
-Build it yourself — this fork publishes no cask yet:
+### From source — no security warning
 
 ```bash
 git clone https://github.com/cdudek/claude-code-switcher-macos.git
 cd claude-code-switcher-macos
-python3.14 -m venv .venv && ./.venv/bin/pip install -e ".[dev]"
-./build_app.sh
-cp -R "dist/Claude Switcher.app" /Applications/
+./install.sh
 ```
 
-`build_app.sh` needs a real CPython (Homebrew's `python3.14`); py2app fails on uv's build
-with `zlib.__file__`. The upstream cask still works if you want the unfixed version:
-`brew install --cask Symbioose/tap/claude-switcher` — but `brew upgrade --cask` will
-overwrite a local build of this fork.
+That builds it, runs the tests, moves any installed copy to the Trash and launches
+the new one. It needs a Homebrew CPython (`brew install python@3.14`); `install.sh`
+finds it, or you can point at one with `PYTHON=/path/to/python3 ./install.sh`.
+
+> **Why not uv?** py2app reads `zlib.__file__`, which uv's Python does not have, and
+> the build dies partway through with an `AttributeError` that explains nothing.
+
+### From a release — one extra step
+
+Download the zip from [Releases](https://github.com/cdudek/claude-code-switcher-macos/releases),
+unzip, drag **Claude Switcher.app** into `/Applications`, then read the next section
+before you double-click it.
+
+## Opening it the first time
+
+**macOS will refuse to open a downloaded build, and the wording makes it sound like
+malware.** Depending on your version you get *"Apple could not verify Claude Switcher
+is free of malware"*, or *"cannot be opened because the developer cannot be
+verified"*.
+
+Nothing is wrong with the app. Apple's check is asking whether a **paid Apple
+Developer account** signed and notarised it. This one is signed ad-hoc — a real
+signature, but not one tied to a registered developer, because notarising costs
+$99/year. macOS treats that the same as unsigned.
+
+Two ways past it, both one-time:
+
+**Terminal** — strips the quarantine flag the download attached:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Claude Switcher.app"
+open "/Applications/Claude Switcher.app"
+```
+
+**Or System Settings** — open the app once and let it be blocked, then go to
+**System Settings → Privacy & Security**, scroll down to Security, and click
+**Open Anyway** next to the message naming Claude Switcher. Confirm with Touch ID.
+
+Building from source avoids all of this: the quarantine flag is attached by whatever
+*downloads* a file, so an app you compiled has never had one.
+
+## Updates
+
+The app checks [Releases](https://github.com/cdudek/claude-code-switcher-macos/releases)
+on launch and every six hours, and offers anything newer. **Updates → Check now**
+forces a check; **Check automatically** turns the background one off.
+
+It never installs without asking. Installing downloads the release zip, verifies it
+unpacks to exactly one app bundle, then hands the swap to a short script that waits
+for the app to quit — a running bundle cannot replace itself. Your current version
+goes to the Trash, not the bin, so a bad build is one drag away from being undone.
+
+The download is not signed, so the update only trusts a URL under
+`https://github.com/cdudek/claude-code-switcher-macos/releases/download/`, and it
+refuses an archive that unpacks anywhere outside its own staging directory.
 
 ## What this fork changes
 
@@ -73,6 +122,16 @@ later as `Login expired · Please run /login` on an account that looked fine:
 
 Full detail, with the measurements behind each:
 [the upstream PR](https://github.com/Symbioose/claude-account-switcher/pull/11).
+
+Two things this fork adds that are not in that PR, because they are features rather
+than fixes:
+
+- **Fourteen menu bar icons, pickable from the menu** (**Icon**). Two families —
+  sparks and relays — plus Claude's own sunburst, a graph and a toggle. Every mark
+  is a compromise between saying *switch*, saying *AI*, and staying legible at 22
+  points, and which compromise wins depends on what else is in your menu bar.
+  Each ships at 22/44/66 px with the SVG it was rendered from.
+- **Self-update from GitHub Releases** — see [Updates](#updates).
 
 ### GitHub release
 
@@ -168,48 +227,43 @@ If a saved Codex session expires because its refresh token was already rotated, 
 - Codex CLI for Codex account switching
 - Codex file-mode credentials for Codex switching in this version
 
-## Build from source
+## Developing
 
 ```bash
-git clone https://github.com/Symbioose/claude-account-switcher.git
-cd claude-account-switcher
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+git clone https://github.com/cdudek/claude-code-switcher-macos.git
+cd claude-code-switcher-macos
+/opt/homebrew/bin/python3.14 -m venv .venv
+./.venv/bin/pip install -e ".[dev]"
+./.venv/bin/pip install "py2app>=0.28" rumps
 ```
 
-Run directly:
+Install it editable, not just on the path: a non-editable install means `pytest`
+silently imports the *installed* copy and your edits do not run. That cost an hour
+once — two test passes reported green against stale code.
 
 ```bash
-claude-switcher
+./.venv/bin/python -m pytest tests/ -q     # tests
+./.venv/bin/python -m claude_switcher      # run without building
+./build_app.sh                             # dist/Claude Switcher.app
 ```
 
-Build the standalone app:
+## Cutting a release
+
+The version lives in **one** place, `src/claude_switcher/__init__.py`; `setup.py`
+and `pyproject.toml` read it, and the release workflow fails if the tag disagrees
+with it.
 
 ```bash
-bash build_app.sh
-# Output: dist/Claude Switcher.app
+# bump __version__, commit, then:
+git tag v0.5.0 && git push origin v0.5.0
 ```
 
-Run tests:
+`.github/workflows/release.yml` builds on a macOS runner, runs the tests, signs
+ad-hoc, packages with `ditto` (which keeps the bundle's symlinks — `zip` does not)
+and publishes `Claude-Switcher-vX.Y.Z.zip`.
 
-```bash
-pytest tests/ -q
-```
-
-## Release artifact
-
-The Homebrew cask expects release assets named:
-
-```text
-Claude-Switcher-vX.Y.Z.zip
-```
-
-The app bundle inside the zip must be:
-
-```text
-Claude Switcher.app
-```
+**The release must carry exactly one `.zip` asset.** The in-app updater refuses a
+release with two, because picking between them means guessing which binary to run.
 
 ## Credits
 

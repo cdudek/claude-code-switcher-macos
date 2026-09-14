@@ -8,7 +8,17 @@ This creates a standalone macOS .app bundle in the dist/ folder.
 The .app is fully standalone — no Python install needed on the target machine.
 """
 
+import re
+from pathlib import Path
+
 from setuptools import setup
+
+# One source of truth. Two hardcoded copies drifted apart the moment a release
+# was cut from a branch, and the release workflow checks the tag against this.
+VERSION = re.search(
+    r'__version__ = "([^"]+)"',
+    Path("src/claude_switcher/__init__.py").read_text(encoding="utf-8"),
+).group(1)
 
 # py2app conflicts with pyproject.toml's install_requires,
 # so we keep this file minimal and self-contained.
@@ -21,8 +31,8 @@ OPTIONS = {
         "CFBundleName": "Claude Switcher",
         "CFBundleDisplayName": "Claude Switcher",
         "CFBundleIdentifier": "com.emilejouannet.claude-switcher",
-        "CFBundleVersion": "0.4.3",
-        "CFBundleShortVersionString": "0.4.3",
+        "CFBundleVersion": VERSION,
+        "CFBundleShortVersionString": VERSION,
         "LSUIElement": True,
         "LSMinimumSystemVersion": "12.0",
     },

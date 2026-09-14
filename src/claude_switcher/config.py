@@ -30,6 +30,7 @@ class AppSettings:
     )
     auto_switch_threshold: float = 100.0
     icon: str = DEFAULT_ICON
+    auto_update: bool = True
 
 
 def _default_settings_dict() -> dict:
@@ -81,7 +82,16 @@ def _settings_from_dict(data: dict | None) -> AppSettings:
     if not isinstance(icon, str) or not icon:
         icon = defaults.icon
 
-    return AppSettings(auto_switch=auto_switch, auto_switch_threshold=threshold, icon=icon)
+    auto_update = data.get("auto_update", defaults.auto_update)
+    if not isinstance(auto_update, bool):
+        auto_update = defaults.auto_update
+
+    return AppSettings(
+        auto_switch=auto_switch,
+        auto_switch_threshold=threshold,
+        icon=icon,
+        auto_update=auto_update,
+    )
 
 
 def load_accounts(path: Path = DEFAULT_CONFIG_PATH) -> list[AccountInfo]:
@@ -176,6 +186,13 @@ def set_icon(slug: str, path: Path = DEFAULT_CONFIG_PATH) -> None:
     """Persist the chosen menu bar icon."""
     settings = load_settings(path)
     settings.icon = slug
+    save_settings(settings, path)
+
+
+def set_auto_update(enabled: bool, path: Path = DEFAULT_CONFIG_PATH) -> None:
+    """Turn the update check on or off."""
+    settings = load_settings(path)
+    settings.auto_update = bool(enabled)
     save_settings(settings, path)
 
 

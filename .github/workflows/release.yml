@@ -1,0 +1,92 @@
+name: Release
+
+# Tag a version and this builds the app and attaches it to the release the
+# in-app updater looks for. The updater accepts a release only if it carries
+# exactly ONE .zip asset, so never add a second one here.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.5.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # py2app needs a framework build; the setup-python macOS builds are one.
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "py2app>=0.28" rumps pytest
+          python -m pip install -e .
+
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
+      - name: Check the tag matches the version in the source
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          SRC="v$(python -c 'from claude_switcher import __version__; print(__version__)')"
+          if [ "$TAG" != "$SRC" ]; then
+            echo "::error::tag $TAG does not match __version__ $SRC - bump src/claude_switcher/__init__.py"
+            exit 1
+          fi
+
+      - name: Build the app
+        run: ./build_app.sh
+
+      - name: Sign ad-hoc and strip extended attributes
+        # Not a Developer ID signature - it cannot be, without a paid account -
+        # but it gives the bundle a stable identity and stops macOS refusing it
+        # outright on Apple silicon, which requires *some* signature.
+        run: |
+          xattr -cr "dist/Claude Switcher.app"
+          codesign --force --deep --sign - "dist/Claude Switcher.app"
+          codesign --verify --verbose "dist/Claude Switcher.app"
+
+      - name: Package
+        id: package
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          NAME="Claude-Switcher-$TAG.zip"
+          # ditto keeps the bundle's symlinks and resource forks; `zip` does not.
+          ditto -c -k --sequesterRsrc --keepParent "dist/Claude Switcher.app" "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.package.outputs.tag }}
+          files: ${{ steps.package.outputs.name }}
+          fail_on_unmatched_files: true
+          body: |
+            ## Install
+
+            Download the zip, unzip it, and drag **Claude Switcher.app** to `/Applications`.
+
+            **macOS will refuse to open it the first time** — this build is ad-hoc
+            signed, not notarised, because notarising needs a paid Apple Developer
+            account. Either run this once:
+
+            ```bash
+            xattr -dr com.apple.quarantine "/Applications/Claude Switcher.app"
+            ```
+
+            or open **System Settings → Privacy & Security**, scroll to Security,
+            and click **Open Anyway** next to the blocked-app message.
+
+            Already running an older version? It updates itself — **Updates → Check now**.
