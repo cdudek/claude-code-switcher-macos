@@ -213,6 +213,9 @@ if ditto {q(str(staged_app))} {q(str(target))} \
   xattr -dr com.apple.quarantine {q(str(target))} 2>/dev/null || true
   echo "installed ok"
   rm -rf {q(str(staged_app))}
+  # Keep exactly one rollback copy, not one per update.
+  find "$(dirname {q(str(target))})" -maxdepth 1 -name ".*.previous" \
+       ! -path {q(str(backup))} -exec rm -rf {{}} + 2>/dev/null || true
 else
   echo "FATAL: install failed, restoring the previous version"
   rm -rf {q(str(target))}
@@ -224,6 +227,17 @@ echo "done"
 """
 
 
+def backup_path(target: Path) -> Path:
+    """Where the outgoing version is kept so a bad update can be rolled back.
+
+    Leading dot: Finder hides it. A visible "Claude Switcher.app.previous" next
+    to the app after every update looks like a failed install. It sits beside the
+    target rather than in the Trash so restoring it is a rename on the same
+    filesystem, which cannot half-fail the way a cross-device copy can.
+    """
+    return target.with_name("." + target.name + ".previous")
+
+
 def install_update(staged_app: Path, installed_app: Path | None = None) -> Path:
     """Replace the installed app with the staged one and relaunch.
 
@@ -233,7 +247,7 @@ def install_update(staged_app: Path, installed_app: Path | None = None) -> Path:
     filesystem, which cannot half-fail the way a cross-device copy can.
     """
     target = installed_app or Path("/Applications") / APP_NAME
-    backup = target.with_name(target.name + ".previous")
+    backup = backup_path(target)
     workdir = Path(tempfile.mkdtemp(prefix="cs-swap-"))
     log = workdir / "swap.log"
     script = workdir / "swap.sh"

@@ -259,7 +259,8 @@ class TestSwapScript:
     def test_replaces_the_installed_app(self, tmp_path):
         staged = self._bundle(tmp_path / "stage", "Claude Switcher.app", "0.5.0")
         target = self._bundle(tmp_path / "apps", "Claude Switcher.app", "0.4.3")
-        backup = target.with_name(target.name + ".previous")
+        from claude_switcher.updater import backup_path
+        backup = backup_path(target)
         log = tmp_path / "swap.log"
 
         self._run(staged, target, backup, log, tmp_path)
@@ -267,6 +268,7 @@ class TestSwapScript:
         assert target.is_dir(), f"target gone. log:\n{log.read_text() if log.exists() else '(none)'}"
         assert "0.5.0" in (target / "Contents" / "Info.plist").read_text()
         assert backup.is_dir(), "the previous version must be kept, not deleted"
+        assert backup.name.startswith("."), "the rollback copy must be hidden from Finder"
         assert "0.4.3" in (backup / "Contents" / "Info.plist").read_text()
 
     def test_works_when_nothing_is_installed_yet(self, tmp_path):
@@ -276,7 +278,7 @@ class TestSwapScript:
         target.parent.mkdir()
         log = tmp_path / "swap.log"
 
-        self._run(staged, target, target.with_name(target.name + ".previous"), log, tmp_path)
+        self._run(staged, target, __import__("claude_switcher.updater", fromlist=["x"]).backup_path(target), log, tmp_path)
 
         assert target.is_dir(), f"nothing installed. log:\n{log.read_text() if log.exists() else '(none)'}"
         assert "0.5.0" in (target / "Contents" / "Info.plist").read_text()
@@ -285,7 +287,8 @@ class TestSwapScript:
         """A staged app that has vanished must not cost the user the working one."""
         staged = tmp_path / "stage" / "Claude Switcher.app"   # never created
         target = self._bundle(tmp_path / "apps", "Claude Switcher.app", "0.4.3")
-        backup = target.with_name(target.name + ".previous")
+        from claude_switcher.updater import backup_path
+        backup = backup_path(target)
         log = tmp_path / "swap.log"
 
         self._run(staged, target, backup, log, tmp_path)
@@ -297,5 +300,24 @@ class TestSwapScript:
         staged = self._bundle(tmp_path / "stage", "Claude Switcher.app", "0.5.0")
         target = self._bundle(tmp_path / "apps", "Claude Switcher.app", "0.4.3")
         log = tmp_path / "swap.log"
-        self._run(staged, target, target.with_name(target.name + ".previous"), log, tmp_path)
+        self._run(staged, target, __import__("claude_switcher.updater", fromlist=["x"]).backup_path(target), log, tmp_path)
         assert log.is_file() and "installed ok" in log.read_text()
+
+
+class TestBackupPath:
+    """Derived by the code under test, not recomputed by the test."""
+
+    def test_is_hidden_from_finder(self):
+        from claude_switcher.updater import backup_path
+        b = backup_path(Path("/Applications/Claude Switcher.app"))
+        assert b.name.startswith("."), f"{b.name} would be visible in /Applications"
+
+    def test_sits_beside_the_target(self):
+        """Restoring must be a rename on one filesystem, not a copy across two."""
+        from claude_switcher.updater import backup_path
+        t = Path("/Applications/Claude Switcher.app")
+        assert backup_path(t).parent == t.parent
+
+    def test_names_the_app_it_backs_up(self):
+        from claude_switcher.updater import backup_path
+        assert backup_path(Path("/x/Foo.app")).name == ".Foo.app.previous"
