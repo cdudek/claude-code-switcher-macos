@@ -31,6 +31,64 @@ def _validate_email(email: str) -> str:
     return email
 
 
+def _oauth_section(blob: str | None) -> dict | None:
+    """Return the claudeAiOauth object from a credential blob, or None if unreadable.
+
+    Older blobs stored the token fields at the top level, so fall back to the
+    whole object when the claudeAiOauth key is absent.
+    """
+    if not blob:
+        return None
+    try:
+        data = json.loads(blob)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    section = data.get("claudeAiOauth", data)
+    return section if isinstance(section, dict) else None
+
+
+def has_valid_tokens(blob: str | None) -> bool:
+    """True if a credential blob carries a usable OAuth token pair.
+
+    Claude Code writes the Keychain entry in stages: for up to a second after
+    login the record exists with empty accessToken/refreshToken strings. Saving
+    that husk as an account snapshot makes a later switch to it fail with
+    "Login expired - Please run /login", because the empty tokens are copied
+    verbatim into the live Keychain entry.
+    """
+    section = _oauth_section(blob)
+    if section is None:
+        return False
+    return bool(section.get("accessToken")) and bool(section.get("refreshToken"))
+
+
+def _carry_over_mcp_oauth(target_creds: str, live_creds: str | None) -> str:
+    """Preserve machine-local MCP OAuth tokens across an account switch.
+
+    The Keychain blob holds two unrelated things: claudeAiOauth (the Claude
+    account) and mcpOAuth (tokens for MCP servers such as Vercel or Notion).
+    MCP tokens authenticate the machine's user to those third parties and have
+    nothing to do with which Claude account is active, so overwriting the blob
+    wholesale silently logs every MCP server out. Entries already present in the
+    target win, so a snapshot that carries its own MCP tokens keeps them.
+    """
+    try:
+        target = json.loads(target_creds)
+        live = json.loads(live_creds) if live_creds else {}
+    except (json.JSONDecodeError, TypeError):
+        return target_creds
+    if not isinstance(target, dict) or not isinstance(live, dict):
+        return target_creds
+    live_mcp = live.get("mcpOAuth")
+    if not isinstance(live_mcp, dict):
+        return target_creds
+    target_mcp = target.get("mcpOAuth")
+    target["mcpOAuth"] = {**live_mcp, **(target_mcp if isinstance(target_mcp, dict) else {})}
+    return json.dumps(target)
+
+
 def _read_oauth_account() -> dict | None:
     """Read the oauthAccount object from ~/.claude.json."""
     try:
@@ -107,11 +165,12 @@ def run_auth_login() -> bool:
 
 def import_current_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | None:
     """Import the currently logged-in Claude Code account. Returns AccountInfo or None."""
-    # Retry keychain read — after login, credentials may not be written yet
+    # Retry keychain read — after login the entry can exist with empty tokens
     creds = None
     for _ in range(5):
-        creds = keychain.read_credentials(CLAUDE_SERVICE)
-        if creds:
+        candidate = keychain.read_credentials(CLAUDE_SERVICE)
+        if has_valid_tokens(candidate):
+            creds = candidate
             break
         time.sleep(1)
     if not creds:
@@ -155,11 +214,13 @@ def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -
     """Switch to a different account. Saves current credentials first."""
     active = get_active_account(config_path)
 
+    live_creds = keychain.read_credentials(CLAUDE_SERVICE)
+
     if active:
-        current_creds = keychain.read_credentials(CLAUDE_SERVICE)
-        if current_creds:
+        # Never overwrite a good snapshot with a half-written one
+        if has_valid_tokens(live_creds):
             keychain.write_credentials(
-                f"claude-switcher:{active.email}", active.keychain_account, current_creds
+                f"claude-switcher:{active.email}", active.keychain_account, live_creds
             )
         # Save current oauthAccount state from ~/.claude.json
         current_oauth = _read_oauth_account()
@@ -171,6 +232,11 @@ def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -
     target_creds = keychain.read_credentials(f"claude-switcher:{target_email}")
     if not target_creds:
         raise RuntimeError(f"Credentials not found in Keychain for {target_email}")
+    if not has_valid_tokens(target_creds):
+        raise RuntimeError(
+            f"Saved credentials for {target_email} are incomplete — they carry no "
+            "access token. Remove the account and add it again."
+        )
 
     accounts = load_accounts(config_path)
     target_account = next(
@@ -179,6 +245,7 @@ def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -
     if not target_account:
         raise RuntimeError(f"Account {target_email} not found in config")
 
+    target_creds = _carry_over_mcp_oauth(target_creds, live_creds)
     keychain.write_credentials(CLAUDE_SERVICE, target_account.keychain_account, target_creds)
 
     # Restore target's oauthAccount into ~/.claude.json
@@ -193,7 +260,7 @@ def add_new_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | No
     active = get_active_account(config_path)
     if active:
         current_creds = keychain.read_credentials(CLAUDE_SERVICE)
-        if current_creds:
+        if has_valid_tokens(current_creds):
             keychain.write_credentials(
                 f"claude-switcher:{active.email}", active.keychain_account, current_creds
             )
@@ -210,7 +277,7 @@ def add_new_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | No
     if not run_auth_login():
         if active:
             prev_creds = keychain.read_credentials(f"claude-switcher:{active.email}")
-            if prev_creds:
+            if has_valid_tokens(prev_creds):
                 keychain.write_credentials(CLAUDE_SERVICE, active.keychain_account, prev_creds)
         return None
 
@@ -220,7 +287,7 @@ def add_new_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | No
         # Login succeeded but import failed — restore previous account
         if active:
             prev_creds = keychain.read_credentials(f"claude-switcher:{active.email}")
-            if prev_creds:
+            if has_valid_tokens(prev_creds):
                 keychain.write_credentials(CLAUDE_SERVICE, active.keychain_account, prev_creds)
         return None
 

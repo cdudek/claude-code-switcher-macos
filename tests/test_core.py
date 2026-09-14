@@ -9,6 +9,7 @@ from claude_switcher.core import (
     run_auth_login,
     import_current_account,
     switch_account,
+    has_valid_tokens,
     add_new_account,
     remove_saved_account,
 )
@@ -46,7 +47,7 @@ class TestImportCurrentAccount:
     @patch("claude_switcher.core.keychain")
     def test_import_success(self, mock_kc, mock_status, mock_oauth, tmp_path):
         mock_status.return_value = {"email": "test@test.com", "subscriptionType": "pro", "orgName": "Org"}
-        mock_kc.read_credentials.return_value = '{"accessToken":"tok"}'
+        mock_kc.read_credentials.return_value = '{"accessToken":"tok","refreshToken":"ref"}'
         mock_kc.read_account_attribute.return_value = "testuser"
         mock_oauth.return_value = {"emailAddress": "test@test.com"}
 
@@ -57,7 +58,7 @@ class TestImportCurrentAccount:
         assert result.email == "test@test.com"
         assert result.oauth_account == {"emailAddress": "test@test.com"}
         mock_kc.write_credentials.assert_called_once_with(
-            "claude-switcher:test@test.com", "testuser", '{"accessToken":"tok"}'
+            "claude-switcher:test@test.com", "testuser", '{"accessToken":"tok","refreshToken":"ref"}'
         )
 
     @patch("claude_switcher.core.get_auth_status")
@@ -80,18 +81,18 @@ class TestSwitchAccount:
                                 oauth_account={"emailAddress": "b@test.com"}), config_path)
 
         mock_kc.read_credentials.side_effect = [
-            '{"accessToken":"refreshed-a"}',
-            '{"accessToken":"tok-b"}',
+            '{"accessToken":"refreshed-a","refreshToken":"ref-a"}',
+            '{"accessToken":"tok-b","refreshToken":"ref-b"}',
         ]
         mock_read_oauth.return_value = {"emailAddress": "a@test.com"}
 
         switch_account("b@test.com", config_path)
 
         mock_kc.write_credentials.assert_any_call(
-            "claude-switcher:a@test.com", "usera", '{"accessToken":"refreshed-a"}'
+            "claude-switcher:a@test.com", "usera", '{"accessToken":"refreshed-a","refreshToken":"ref-a"}'
         )
         mock_kc.write_credentials.assert_any_call(
-            "Claude Code-credentials", "userb", '{"accessToken":"tok-b"}'
+            "Claude Code-credentials", "userb", '{"accessToken":"tok-b","refreshToken":"ref-b"}'
         )
         mock_write_oauth.assert_called_once_with({"emailAddress": "b@test.com"})
 
@@ -125,8 +126,8 @@ class TestAddNewAccount:
         add_account(AccountInfo("a@test.com", "pro", "Org A", True, "usera"), config_path)
 
         mock_kc.read_credentials.side_effect = [
-            '{"accessToken":"tok-a"}',
-            '{"accessToken":"tok-new"}',
+            '{"accessToken":"tok-a","refreshToken":"ref-a"}',
+            '{"accessToken":"tok-new","refreshToken":"ref-new"}',
         ]
         mock_kc.read_account_attribute.side_effect = ["newuser"]
         mock_kc.delete_credentials.return_value = False
@@ -197,7 +198,7 @@ class TestCoreWithMixedProviders:
             AccountInfo("user@test.com", "plus", "", True, "codex-user", provider="codex"),
             config_path,
         )
-        mock_kc.read_credentials.side_effect = ['{"token":"current"}', '{"token":"target"}']
+        mock_kc.read_credentials.side_effect = ['{"accessToken":"current","refreshToken":"ref-current"}', '{"accessToken":"target","refreshToken":"ref-target"}']
         mock_read_oauth.return_value = {"emailAddress": "user@test.com"}
 
         switch_account("other@test.com", config_path)
@@ -208,3 +209,161 @@ class TestCoreWithMixedProviders:
         assert codex.active is True
         assert claude_target.active is True
         mock_write_oauth.assert_called_once_with({"emailAddress": "other@test.com"})
+
+
+class TestHasValidTokens:
+    def test_full_blob_is_valid(self):
+        blob = json.dumps({"claudeAiOauth": {"accessToken": "a", "refreshToken": "r"}})
+        assert has_valid_tokens(blob) is True
+
+    def test_legacy_top_level_blob_is_valid(self):
+        assert has_valid_tokens('{"accessToken":"a","refreshToken":"r"}') is True
+
+    def test_empty_token_strings_are_invalid(self):
+        """The husk Claude Code writes for ~1s after login."""
+        blob = json.dumps({
+            "claudeAiOauth": {
+                "accessToken": "",
+                "refreshToken": "",
+                "expiresAt": 0,
+                "subscriptionType": "team",
+            }
+        })
+        assert has_valid_tokens(blob) is False
+
+    def test_missing_refresh_token_is_invalid(self):
+        assert has_valid_tokens('{"claudeAiOauth":{"accessToken":"a"}}') is False
+
+    def test_none_and_garbage_are_invalid(self):
+        assert has_valid_tokens(None) is False
+        assert has_valid_tokens("") is False
+        assert has_valid_tokens("not json") is False
+        assert has_valid_tokens("[]") is False
+
+
+class TestImportRejectsTokenlessBlob:
+    @patch("claude_switcher.core.time.sleep")
+    @patch("claude_switcher.core.get_auth_status")
+    @patch("claude_switcher.core.keychain")
+    def test_husk_is_never_snapshotted(self, mock_kc, mock_status, mock_sleep, tmp_path):
+        husk = '{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}'
+        mock_kc.read_credentials.return_value = husk
+
+        assert import_current_account(tmp_path / "accounts.json") is None
+        mock_kc.write_credentials.assert_not_called()
+
+    @patch("claude_switcher.core.time.sleep")
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.get_auth_status")
+    @patch("claude_switcher.core.keychain")
+    def test_retries_until_tokens_land(self, mock_kc, mock_status, mock_oauth, mock_sleep, tmp_path):
+        husk = '{"claudeAiOauth":{"accessToken":"","refreshToken":""}}'
+        good = '{"claudeAiOauth":{"accessToken":"a","refreshToken":"r"}}'
+        mock_kc.read_credentials.side_effect = [husk, husk, good]
+        mock_kc.read_account_attribute.return_value = "u"
+        mock_status.return_value = {"email": "x@test.com", "subscriptionType": "max", "orgName": "O"}
+
+        result = import_current_account(tmp_path / "accounts.json")
+
+        assert result is not None and result.email == "x@test.com"
+        mock_kc.write_credentials.assert_called_once_with("claude-switcher:x@test.com", "u", good)
+
+
+class TestSwitchGuards:
+    @patch("claude_switcher.core._write_oauth_account")
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.keychain")
+    def test_tokenless_target_raises(self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path):
+        config_path = tmp_path / "accounts.json"
+        from claude_switcher.config import add_account
+        add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
+        add_account(AccountInfo("b@test.com", "pro", "Org", False, "u"), config_path)
+        mock_kc.read_credentials.side_effect = [
+            '{"claudeAiOauth":{"accessToken":"a","refreshToken":"r"}}',
+            '{"claudeAiOauth":{"accessToken":"","refreshToken":""}}',
+        ]
+
+        try:
+            switch_account("b@test.com", config_path)
+            assert False, "Should have raised"
+        except RuntimeError as e:
+            assert "incomplete" in str(e).lower()
+        mock_kc.write_credentials.assert_called_once_with(
+            "claude-switcher:a@test.com", "u",
+            '{"claudeAiOauth":{"accessToken":"a","refreshToken":"r"}}',
+        )
+
+    @patch("claude_switcher.core._write_oauth_account")
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.keychain")
+    def test_husk_does_not_clobber_current_snapshot(self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path):
+        config_path = tmp_path / "accounts.json"
+        from claude_switcher.config import add_account
+        add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
+        add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
+        mock_kc.read_credentials.side_effect = [
+            '{"claudeAiOauth":{"accessToken":"","refreshToken":""}}',
+            '{"claudeAiOauth":{"accessToken":"b","refreshToken":"rb"}}',
+        ]
+
+        switch_account("b@test.com", config_path)
+
+        for call in mock_kc.write_credentials.call_args_list:
+            assert call.args[0] != "claude-switcher:a@test.com"
+
+
+class TestMcpOAuthCarriedOver:
+    @patch("claude_switcher.core._write_oauth_account")
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.keychain")
+    def test_mcp_tokens_survive_a_switch(self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path):
+        config_path = tmp_path / "accounts.json"
+        from claude_switcher.config import add_account
+        add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
+        add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
+
+        live = json.dumps({
+            "claudeAiOauth": {"accessToken": "a", "refreshToken": "ra"},
+            "mcpOAuth": {"vercel": {"accessToken": "v"}, "notion": {"accessToken": "n"}},
+        })
+        target = json.dumps({"claudeAiOauth": {"accessToken": "b", "refreshToken": "rb"}})
+        mock_kc.read_credentials.side_effect = [live, target]
+
+        switch_account("b@test.com", config_path)
+
+        written = next(
+            c.args[2] for c in mock_kc.write_credentials.call_args_list
+            if c.args[0] == "Claude Code-credentials"
+        )
+        blob = json.loads(written)
+        assert blob["claudeAiOauth"]["accessToken"] == "b"
+        assert blob["mcpOAuth"] == {"vercel": {"accessToken": "v"}, "notion": {"accessToken": "n"}}
+
+    @patch("claude_switcher.core._write_oauth_account")
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.keychain")
+    def test_target_mcp_tokens_win(self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path):
+        config_path = tmp_path / "accounts.json"
+        from claude_switcher.config import add_account
+        add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
+        add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
+
+        live = json.dumps({
+            "claudeAiOauth": {"accessToken": "a", "refreshToken": "ra"},
+            "mcpOAuth": {"vercel": {"accessToken": "live"}, "notion": {"accessToken": "n"}},
+        })
+        target = json.dumps({
+            "claudeAiOauth": {"accessToken": "b", "refreshToken": "rb"},
+            "mcpOAuth": {"vercel": {"accessToken": "target"}},
+        })
+        mock_kc.read_credentials.side_effect = [live, target]
+
+        switch_account("b@test.com", config_path)
+
+        written = next(
+            c.args[2] for c in mock_kc.write_credentials.call_args_list
+            if c.args[0] == "Claude Code-credentials"
+        )
+        mcp = json.loads(written)["mcpOAuth"]
+        assert mcp["vercel"]["accessToken"] == "target"
+        assert mcp["notion"]["accessToken"] == "n"
