@@ -378,12 +378,14 @@ def add_new_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | No
                 f"claude-switcher:{active.email}", active.keychain_account, current_creds
             )
 
-    run_auth_logout()
-
-    # Ensure all "Claude Code-credentials" entries are gone before login.
-    # claude auth logout may not clean up the Keychain properly, and leftover
-    # entries cause security find-generic-password -w to return the OLD token
-    # instead of the freshly-issued one after login.
+    # Deliberately NOT `claude auth logout`. Logout revokes the outgoing account's
+    # tokens server-side, and those are the exact tokens just saved above as that
+    # account's snapshot — so adding an account used to kill the previous one's
+    # saved session every time. Deleting the Keychain entry achieves the only
+    # thing the login actually needs: a clean slate, so that
+    # `security find-generic-password -w` returns the freshly-issued token rather
+    # than a leftover old one. The account stays signed in on the server, which is
+    # the whole point of keeping a snapshot of it.
     while keychain.delete_credentials(CLAUDE_SERVICE):
         pass
 

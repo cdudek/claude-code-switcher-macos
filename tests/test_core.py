@@ -145,7 +145,6 @@ class TestAddNewAccount:
         result = add_new_account(config_path)
         assert result is not None
         assert result.email == "new@test.com"
-        mock_logout.assert_called_once()
         mock_login.assert_called_once()
 
     @patch("claude_switcher.core.run_auth_login")
@@ -569,3 +568,52 @@ class TestSwitchRefreshesTheSnapshot:
         written = next(c.args[2] for c in mock_kc.write_credentials.call_args_list
                        if c.args[0] == "Claude Code-credentials")
         assert json.loads(written)["claudeAiOauth"]["accessToken"] == "old"
+
+
+class TestAddAccountDoesNotRevokeThePreviousOne:
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.get_auth_status")
+    @patch("claude_switcher.core.run_auth_login", return_value=True)
+    @patch("claude_switcher.core.run_auth_logout")
+    @patch("claude_switcher.core.keychain")
+    def test_logout_is_never_run(
+        self, mock_kc, mock_logout, mock_login, mock_status, mock_oauth, tmp_path
+    ):
+        """`claude auth logout` revokes the outgoing account server-side.
+
+        Those are the tokens saved a moment earlier as that account's snapshot, so
+        calling it turned every Add Account into a silent loss of the previous
+        account's saved session. Clearing the Keychain entry is all the login needs.
+        """
+        config_path = tmp_path / "accounts.json"
+        from claude_switcher.config import add_account
+        add_account(AccountInfo("a@test.com", "pro", "Org A", True, "usera"), config_path)
+
+        good = '{"claudeAiOauth":{"accessToken":"a","refreshToken":"ra"}}'
+        mock_kc.read_credentials.side_effect = [good, good, good]
+        mock_kc.read_account_attribute.return_value = "newuser"
+        mock_kc.delete_credentials.return_value = False
+        mock_status.return_value = {"email": "new@test.com", "subscriptionType": "max", "orgName": "O"}
+
+        assert add_new_account(config_path) is not None
+        mock_logout.assert_not_called()
+
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.get_auth_status")
+    @patch("claude_switcher.core.run_auth_login", return_value=True)
+    @patch("claude_switcher.core.run_auth_logout")
+    @patch("claude_switcher.core.keychain")
+    def test_keychain_entry_is_still_cleared_before_login(
+        self, mock_kc, mock_logout, mock_login, mock_status, mock_oauth, tmp_path
+    ):
+        """Without the clear, the post-login read returns the stale token."""
+        config_path = tmp_path / "accounts.json"
+        good = '{"claudeAiOauth":{"accessToken":"a","refreshToken":"ra"}}'
+        mock_kc.read_credentials.side_effect = [None, good, good]
+        mock_kc.read_account_attribute.return_value = "newuser"
+        mock_kc.delete_credentials.side_effect = [True, True, False]
+        mock_status.return_value = {"email": "new@test.com", "subscriptionType": "max", "orgName": "O"}
+
+        assert add_new_account(config_path) is not None
+        assert mock_kc.delete_credentials.call_count == 3
+        mock_kc.delete_credentials.assert_any_call("Claude Code-credentials")
