@@ -61,22 +61,31 @@ jobs:
         id: package
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          NAME="Claude-Switcher-$TAG.zip"
+          ZIP="Claude-Switcher-$TAG.zip"
+          DMG="Claude-Switcher-$TAG.dmg"
           # ditto keeps the bundle's symlinks and resource forks; `zip` does not.
-          ditto -c -k --sequesterRsrc --keepParent "dist/Claude Switcher.app" "$NAME"
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          ditto -c -k --sequesterRsrc --keepParent "dist/Claude Switcher.app" "$ZIP"
+          # The DMG is what a person downloads; the zip is what the in-app
+          # updater fetches. It matches on .zip and refuses a release carrying
+          # two of them, so never add a second zip here.
+          ./scripts/make-dmg.sh "$DMG"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.package.outputs.tag }}
-          files: ${{ steps.package.outputs.name }}
+          files: |
+            ${{ steps.package.outputs.dmg }}
+            ${{ steps.package.outputs.zip }}
           fail_on_unmatched_files: true
           body: |
             ## Install
 
-            Download the zip, unzip it, and drag **Claude Switcher.app** to `/Applications`.
+            Download the **.dmg** and drag Claude Switcher into Applications.
+            (The `.zip` is what the in-app updater fetches — you do not need it.)
 
             **macOS will refuse to open it the first time** — this build is ad-hoc
             signed, not notarised, because notarising needs a paid Apple Developer

@@ -171,27 +171,76 @@ def download_update(url: str, into: Path) -> Path:
     return app
 
 
-def install_update(staged_app: Path, installed_app: Path | None = None) -> None:
+def swap_script(staged_app: Path, target: Path, backup: Path, log: Path, pid: int) -> str:
+    """The script that replaces the app once this process has exited.
+
+    Three things this must never do, all learned the hard way when an update
+    left /Applications with no app in it at all:
+
+    - `set -e` with `[ -d x ] && cmd`: when the test is false the AND-list
+      returns non-zero and the script exits there, silently skipping the rest.
+    - `mv` a bundle across filesystems: the staging directory is under
+      /var/folders and the target is /Applications, so mv degrades to a
+      copy-then-delete that can lose the source without completing the target.
+      `ditto` is the tool that copies a bundle correctly.
+    - Trust that it worked. The copy is verified, and if the new bundle is not
+      there afterwards the previous one is put back.
+    """
+    q = shlex.quote
+    return f"""#!/bin/bash
+exec >>{q(str(log))} 2>&1
+echo "=== swap $(date) ==="
+# Wait for the app to exit; a bundle cannot be replaced while it is mapped.
+for _ in $(seq 1 200); do
+  kill -0 {pid} 2>/dev/null || break
+  sleep 0.3
+done
+
+if [ -e {q(str(target))} ]; then
+  echo "backing up to {backup}"
+  rm -rf {q(str(backup))}
+  if ! mv {q(str(target))} {q(str(backup))}; then
+    echo "FATAL: could not move the installed app aside; leaving it alone"
+    open {q(str(target))}
+    exit 1
+  fi
+fi
+
+echo "installing"
+# ditto, not mv: the staging dir and /Applications are different filesystems.
+if ditto {q(str(staged_app))} {q(str(target))} \
+   && [ -f {q(str(target))}/Contents/Info.plist ]; then
+  xattr -dr com.apple.quarantine {q(str(target))} 2>/dev/null || true
+  echo "installed ok"
+  rm -rf {q(str(staged_app))}
+else
+  echo "FATAL: install failed, restoring the previous version"
+  rm -rf {q(str(target))}
+  mv {q(str(backup))} {q(str(target))}
+fi
+
+open {q(str(target))}
+echo "done"
+"""
+
+
+def install_update(staged_app: Path, installed_app: Path | None = None) -> Path:
     """Replace the installed app with the staged one and relaunch.
 
-    A bundle cannot overwrite itself while its own executable is mapped, so the
-    swap runs in a detached shell script that first waits for this process to
-    exit. The old bundle goes to the Trash rather than being deleted - if the new
-    build does not launch, the previous one is one drag away.
+    Returns the path of the log the swap writes, so a failure after this process
+    has gone can still be read. The previous bundle is kept next to the target
+    rather than deleted - restoring it is then a plain rename on the same
+    filesystem, which cannot half-fail the way a cross-device copy can.
     """
     target = installed_app or Path("/Applications") / APP_NAME
-    script = Path(tempfile.mkdtemp(prefix="cs-update-")) / "swap.sh"
-    trash = Path.home() / ".Trash" / f"Claude Switcher (replaced {os.getpid()}).app"
-    script.write_text(f"""#!/bin/bash
-set -e
-while kill -0 {os.getpid()} 2>/dev/null; do sleep 0.3; done
-[ -d {shlex.quote(str(target))} ] && mv {shlex.quote(str(target))} {shlex.quote(str(trash))}
-mv {shlex.quote(str(staged_app))} {shlex.quote(str(target))}
-xattr -dr com.apple.quarantine {shlex.quote(str(target))} 2>/dev/null || true
-open {shlex.quote(str(target))}
-""")
+    backup = target.with_name(target.name + ".previous")
+    workdir = Path(tempfile.mkdtemp(prefix="cs-swap-"))
+    log = workdir / "swap.log"
+    script = workdir / "swap.sh"
+    script.write_text(swap_script(staged_app, target, backup, log, os.getpid()))
     script.chmod(0o700)
     subprocess.Popen(["/bin/bash", str(script)], start_new_session=True)
+    return log
 
 
 def cleanup(directory: Path) -> None:

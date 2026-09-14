@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+ <defs>
+  <linearGradient id="g" x1="0.05" y1="0" x2="0.95" y2="1">
+   <stop offset="0" stop-color="#FF9A2E"/><stop offset="0.68" stop-color="#E23744"/>
+   <stop offset="1" stop-color="#7B2FD6"/>
+  </linearGradient>
+  <radialGradient id="glow" cx="0.26" cy="0.20" r="0.70">
+   <stop offset="0" stop-color="#FFF0E2" stop-opacity="0.24"/><stop offset="1" stop-color="#FFF0E2" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="hi" x1="0" y1="0" x2="0" y2="1">
+   <stop offset="0" stop-color="#ffffff" stop-opacity="0.24"/><stop offset="0.40" stop-color="#ffffff" stop-opacity="0"/>
+  </linearGradient>
+ </defs>
+ <rect x="100" y="100" width="824" height="824" rx="185.4" fill="url(#g)"/>
+ <rect x="100" y="100" width="824" height="824" rx="185.4" fill="url(#glow)"/>
+ <rect x="100" y="100" width="824" height="824" rx="185.4" fill="url(#hi)"/>
+ <g fill="#FFFDFA"><path d="M470,327 Q534.48,510.52 718,575 Q534.48,639.48 470,823 Q405.52,639.48 222,575 Q405.52,510.52 470,327 Z"/><path d="M672,272 Q706.32,369.68 804,404 Q706.32,438.32 672,536 Q637.68,438.32 540,404 Q637.68,369.68 672,272 Z"/></g>
+</svg>

@@ -224,3 +224,78 @@ class TestCheckForUpdate:
         resp.__exit__ = lambda s, *a: False
         mock_open.return_value = resp
         assert check_for_update() is None
+
+
+class TestSwapScript:
+    """The swap runs after this process is gone, so it gets tested as a script.
+
+    An update once left /Applications with no app in it and nothing in the Trash.
+    These run the real generated bash against throwaway directories.
+    """
+
+    def _bundle(self, root: Path, name: str, version: str) -> Path:
+        app = root / name
+        (app / "Contents" / "MacOS").mkdir(parents=True)
+        (app / "Contents" / "Info.plist").write_text(f"<plist>{version}</plist>")
+        (app / "Contents" / "MacOS" / "run").write_text("#!/bin/bash\ntrue\n")
+        return app
+
+    def _run(self, staged, target, backup, log, tmp):
+        from claude_switcher.updater import swap_script
+        import subprocess as sp
+        script = tmp / "swap.sh"
+        # pid 1 is always alive, so use this process's pid: it has already
+        # "exited" from the script's point of view only if we pass a dead one.
+        script.write_text(swap_script(staged, target, backup, log, 999999))
+        script.chmod(0o700)
+        # `open` is not wanted in a test; stub it on PATH.
+        stub = tmp / "bin"
+        stub.mkdir(exist_ok=True)
+        (stub / "open").write_text("#!/bin/bash\nexit 0\n")
+        (stub / "open").chmod(0o755)
+        env = dict(**{**__import__("os").environ, "PATH": f"{stub}:/usr/bin:/bin:/usr/sbin"})
+        return sp.run(["/bin/bash", str(script)], env=env, capture_output=True, text=True, timeout=60)
+
+    def test_replaces_the_installed_app(self, tmp_path):
+        staged = self._bundle(tmp_path / "stage", "Claude Switcher.app", "0.5.0")
+        target = self._bundle(tmp_path / "apps", "Claude Switcher.app", "0.4.3")
+        backup = target.with_name(target.name + ".previous")
+        log = tmp_path / "swap.log"
+
+        self._run(staged, target, backup, log, tmp_path)
+
+        assert target.is_dir(), f"target gone. log:\n{log.read_text() if log.exists() else '(none)'}"
+        assert "0.5.0" in (target / "Contents" / "Info.plist").read_text()
+        assert backup.is_dir(), "the previous version must be kept, not deleted"
+        assert "0.4.3" in (backup / "Contents" / "Info.plist").read_text()
+
+    def test_works_when_nothing_is_installed_yet(self, tmp_path):
+        """`set -e` with `[ -d x ] && mv` used to exit here and install nothing."""
+        staged = self._bundle(tmp_path / "stage", "Claude Switcher.app", "0.5.0")
+        target = tmp_path / "apps" / "Claude Switcher.app"
+        target.parent.mkdir()
+        log = tmp_path / "swap.log"
+
+        self._run(staged, target, target.with_name(target.name + ".previous"), log, tmp_path)
+
+        assert target.is_dir(), f"nothing installed. log:\n{log.read_text() if log.exists() else '(none)'}"
+        assert "0.5.0" in (target / "Contents" / "Info.plist").read_text()
+
+    def test_restores_the_previous_version_when_the_copy_fails(self, tmp_path):
+        """A staged app that has vanished must not cost the user the working one."""
+        staged = tmp_path / "stage" / "Claude Switcher.app"   # never created
+        target = self._bundle(tmp_path / "apps", "Claude Switcher.app", "0.4.3")
+        backup = target.with_name(target.name + ".previous")
+        log = tmp_path / "swap.log"
+
+        self._run(staged, target, backup, log, tmp_path)
+
+        assert target.is_dir(), "the previous version was not restored"
+        assert "0.4.3" in (target / "Contents" / "Info.plist").read_text()
+
+    def test_writes_a_log(self, tmp_path):
+        staged = self._bundle(tmp_path / "stage", "Claude Switcher.app", "0.5.0")
+        target = self._bundle(tmp_path / "apps", "Claude Switcher.app", "0.4.3")
+        log = tmp_path / "swap.log"
+        self._run(staged, target, target.with_name(target.name + ".previous"), log, tmp_path)
+        assert log.is_file() and "installed ok" in log.read_text()

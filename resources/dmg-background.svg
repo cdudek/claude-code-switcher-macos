@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 540" width="720" height="540">
+ <defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+   <stop offset="0" stop-color="#FCF8F4"/><stop offset="0.5" stop-color="#F3F0F3"/>
+   <stop offset="1" stop-color="#E8E8F0"/></linearGradient>
+  <radialGradient id="warm" cx="0.10" cy="0.08" r="0.60">
+   <stop offset="0" stop-color="#FFD9BE" stop-opacity="0.50"/><stop offset="1" stop-color="#FFD9BE" stop-opacity="0"/></radialGradient>
+  <radialGradient id="cool" cx="0.94" cy="0.96" r="0.62">
+   <stop offset="0" stop-color="#C8BEE8" stop-opacity="0.42"/><stop offset="1" stop-color="#C8BEE8" stop-opacity="0"/></radialGradient>
+  <linearGradient id="arr" x1="0" y1="0" x2="1" y2="0">
+   <stop offset="0" stop-color="#D4633F" stop-opacity="0.22"/><stop offset="1" stop-color="#D4633F" stop-opacity="0.9"/></linearGradient>
+ </defs>
+ <rect width="720" height="540" fill="url(#bg)"/>
+ <rect width="720" height="540" fill="url(#warm)"/>
+ <rect width="720" height="540" fill="url(#cool)"/>
+
+ <text x="360.0" y="56" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial"
+       font-size="26" font-weight="600" fill="#241F2C" letter-spacing="-0.3">Install Claude Switcher</text>
+ <text x="360.0" y="82" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial"
+       font-size="14" fill="#6E687A">Drag the app into Applications. That is the whole install.</text>
+
+ <rect x="260.0" y="192" width="150.0" height="8" rx="4" fill="url(#arr)"/>
+ <path d="M436.0 182 L458.0 196 L436.0 210 Z" fill="#D4633F"/>
+ <text x="348.0" y="174" text-anchor="middle"
+       font-family="Helvetica Neue, Helvetica, Arial" font-size="13.5" font-weight="600" fill="#9A5237">drag</text>
+ <circle cx="142.0" cy="144.0" r="12.5" fill="#2A2732" opacity="0.92"/><text x="142.0" y="148.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial" font-size="13.5" font-weight="700" fill="#FBFAF8">1</text>
+ <circle cx="446.0" cy="144.0" r="12.5" fill="#2A2732" opacity="0.92"/><text x="446.0" y="148.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial" font-size="13.5" font-weight="700" fill="#FBFAF8">2</text>
+
+ <path d="M500 266.0 C 500 346, 500 366, 500 334.0"
+       fill="none" stroke="#A29AAE" stroke-width="6" stroke-linecap="round" stroke-dasharray="1 14"/>
+ <path d="M487 336.0 L500 358.0 L513 336.0 Z" fill="#A29AAE"/>
+ <circle cx="446.0" cy="360.0" r="12.5" fill="#2A2732" opacity="0.92"/><text x="446.0" y="364.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial" font-size="13.5" font-weight="700" fill="#FBFAF8">3</text>
+
+ <text x="426.0" y="390" text-anchor="end"
+       font-family="Helvetica Neue, Helvetica, Arial" font-size="15" font-weight="600" fill="#2E2937">Only if macOS blocks it</text>
+ <text x="426.0" y="412" text-anchor="end"
+       font-family="Helvetica Neue, Helvetica, Arial" font-size="13" fill="#5E5869">Right-click this helper and choose</text>
+ <text x="426.0" y="430" text-anchor="end"
+       font-family="Helvetica Neue, Helvetica, Arial" font-size="13" fill="#5E5869">Open. Nothing is wrong with the app.</text>
+</svg>

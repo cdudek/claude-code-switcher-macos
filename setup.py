@@ -23,9 +23,13 @@ VERSION = re.search(
 # py2app conflicts with pyproject.toml's install_requires,
 # so we keep this file minimal and self-contained.
 APP = ["src/claude_switcher/app.py"]
+ICON = "src/claude_switcher/resources/AppIcon.icns"
 
 OPTIONS = {
     "argv_emulation": False,
+    # Without this py2app ships its own PythonApplet.icns and the app shows up
+    # in Finder, the Dock and the Trash as a generic Python rocket.
+    "iconfile": ICON,
     # LSUIElement=True = menu bar app only (no Dock icon, no Cmd+Tab entry)
     "plist": {
         "CFBundleName": "Claude Switcher",
