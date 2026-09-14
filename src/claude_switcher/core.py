@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from claude_switcher import keychain
 from claude_switcher.config import (
@@ -20,6 +22,18 @@ from claude_switcher.config import (
 
 CLAUDE_SERVICE = keychain.CLAUDE_SERVICE
 CLAUDE_STATE_FILE = Path.home() / ".claude.json"
+
+CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+CLAUDE_OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
+CLAUDE_SESSION_EXPIRED_MESSAGE = (
+    "This saved Claude session is no longer valid. Anthropic revokes an account's "
+    "tokens when that account signs in again, so a /login or an Add Account since "
+    "this snapshot was taken has invalidated it. Remove the account and add it again."
+)
+
+
+class ClaudeCredentialsExpiredError(RuntimeError):
+    """Raised when saved Claude tokens have been revoked or already consumed."""
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -120,6 +134,60 @@ def _restore_mcp_oauth(preserved_mcp: dict, email: str, keychain_account: str) -
     merged = _carry_over_mcp_oauth(live, json.dumps({"mcpOAuth": preserved_mcp}))
     keychain.write_credentials(CLAUDE_SERVICE, keychain_account, merged)
     keychain.write_credentials(f"claude-switcher:{email}", keychain_account, merged)
+
+
+def refresh_claude_credentials(creds: str) -> str | None:
+    """Return the blob with a freshly minted token pair, or None on a transient failure.
+
+    Saved credentials rot in a way no local check can see: Anthropic revokes an
+    account's token pair when that account authenticates again, so a snapshot can
+    carry a shape-valid, not-yet-expired accessToken that the API answers with 401.
+    Refreshing at switch time both proves the saved session is still real and keeps
+    the snapshot alive, which is the same treatment the Codex path already gets.
+
+    Raises ClaudeCredentialsExpiredError when the server rejects the refresh token
+    outright — that snapshot is dead and only a fresh login can replace it.
+    """
+    section = _oauth_section(creds)
+    if not section or not section.get("refreshToken"):
+        return None
+
+    body = json.dumps({
+        "grant_type": "refresh_token",
+        "refresh_token": section["refreshToken"],
+        "client_id": CLAUDE_OAUTH_CLIENT_ID,
+    }).encode("utf-8")
+    req = Request(CLAUDE_OAUTH_TOKEN_URL, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Accept", "application/json")
+
+    try:
+        with urlopen(req, timeout=15) as resp:
+            refreshed = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        text = exc.read().decode("utf-8", errors="replace")
+        if exc.code in {400, 401} and (
+            "invalid_grant" in text or "not found or invalid" in text
+        ):
+            raise ClaudeCredentialsExpiredError(CLAUDE_SESSION_EXPIRED_MESSAGE) from exc
+        return None
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+
+    if not refreshed.get("access_token"):
+        return None
+
+    try:
+        blob = json.loads(creds)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    target = blob.get("claudeAiOauth") if isinstance(blob.get("claudeAiOauth"), dict) else blob
+    target["accessToken"] = refreshed["access_token"]
+    if refreshed.get("refresh_token"):
+        target["refreshToken"] = refreshed["refresh_token"]
+    if refreshed.get("expires_in"):
+        target["expiresAt"] = int(time.time() * 1000) + int(refreshed["expires_in"]) * 1000
+    return json.dumps(blob)
 
 
 def _read_oauth_account() -> dict | None:
@@ -277,6 +345,15 @@ def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -
     )
     if not target_account:
         raise RuntimeError(f"Account {target_email} not found in config")
+
+    # Prove the saved session is still real, and refresh the snapshot while we are
+    # here. A transient network failure falls through to the stored tokens.
+    refreshed = refresh_claude_credentials(target_creds)
+    if refreshed:
+        target_creds = refreshed
+        keychain.write_credentials(
+            f"claude-switcher:{target_email}", target_account.keychain_account, refreshed
+        )
 
     target_creds = _carry_over_mcp_oauth(target_creds, live_creds)
     keychain.write_credentials(CLAUDE_SERVICE, target_account.keychain_account, target_creds)

@@ -1,6 +1,11 @@
+import io
 import json
+import time
 from unittest.mock import patch, MagicMock
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+
+import pytest
 
 from claude_switcher.core import (
     check_claude_cli,
@@ -10,6 +15,8 @@ from claude_switcher.core import (
     import_current_account,
     switch_account,
     has_valid_tokens,
+    refresh_claude_credentials,
+    ClaudeCredentialsExpiredError,
     add_new_account,
     remove_saved_account,
 )
@@ -423,3 +430,142 @@ class TestAddAccountPreservesMcpOAuth:
         assert add_new_account(config_path) is not None
         for call in mock_kc.write_credentials.call_args_list:
             assert call.args[0] != "Claude Code-credentials"
+
+
+@pytest.mark.real_refresh
+class TestRefreshClaudeCredentials:
+    def _blob(self, access="old", refresh="r-old", mcp=None):
+        b = {"claudeAiOauth": {"accessToken": access, "refreshToken": refresh,
+                               "expiresAt": 1, "subscriptionType": "max"}}
+        if mcp:
+            b["mcpOAuth"] = mcp
+        return json.dumps(b)
+
+    def _response(self, payload):
+        resp = MagicMock()
+        resp.read.return_value = json.dumps(payload).encode()
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = lambda s, *a: False
+        return resp
+
+    @patch("claude_switcher.core.urlopen")
+    def test_rotated_pair_is_written_into_the_blob(self, mock_open):
+        mock_open.return_value = self._response(
+            {"access_token": "new", "refresh_token": "r-new", "expires_in": 28800}
+        )
+        out = refresh_claude_credentials(self._blob(mcp={"vercel": {"accessToken": "v"}}))
+        o = json.loads(out)
+        assert o["claudeAiOauth"]["accessToken"] == "new"
+        assert o["claudeAiOauth"]["refreshToken"] == "r-new"
+        assert o["claudeAiOauth"]["expiresAt"] > time.time() * 1000
+        assert o["claudeAiOauth"]["subscriptionType"] == "max"
+        assert o["mcpOAuth"] == {"vercel": {"accessToken": "v"}}
+
+    @patch("claude_switcher.core.urlopen")
+    def test_server_keeping_the_refresh_token_leaves_it_alone(self, mock_open):
+        mock_open.return_value = self._response({"access_token": "new", "expires_in": 100})
+        o = json.loads(refresh_claude_credentials(self._blob()))
+        assert o["claudeAiOauth"]["refreshToken"] == "r-old"
+
+    @patch("claude_switcher.core.urlopen")
+    def test_revoked_refresh_token_raises(self, mock_open):
+        mock_open.side_effect = HTTPError(
+            "u", 400, "Bad Request", {},
+            io.BytesIO(b'{"error":"invalid_grant","error_description":'
+                       b'"Refresh token not found or invalid"}'),
+        )
+        with pytest.raises(ClaudeCredentialsExpiredError):
+            refresh_claude_credentials(self._blob())
+
+    @patch("claude_switcher.core.urlopen")
+    def test_server_error_is_transient_not_fatal(self, mock_open):
+        mock_open.side_effect = HTTPError("u", 500, "Server Error", {}, io.BytesIO(b"boom"))
+        assert refresh_claude_credentials(self._blob()) is None
+
+    @patch("claude_switcher.core.urlopen")
+    def test_offline_is_transient_not_fatal(self, mock_open):
+        mock_open.side_effect = URLError("offline")
+        assert refresh_claude_credentials(self._blob()) is None
+
+    def test_blob_without_refresh_token_is_skipped(self):
+        assert refresh_claude_credentials('{"claudeAiOauth":{"accessToken":"a"}}') is None
+
+
+@pytest.mark.real_refresh
+class TestSwitchRefreshesTheSnapshot:
+    @patch("claude_switcher.core._write_oauth_account")
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.refresh_claude_credentials")
+    @patch("claude_switcher.core.keychain")
+    def test_refreshed_pair_lands_in_snapshot_and_live(
+        self, mock_kc, mock_refresh, mock_read_oauth, mock_write_oauth, tmp_path
+    ):
+        config_path = tmp_path / "accounts.json"
+        from claude_switcher.config import add_account
+        add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
+        add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
+
+        live = json.dumps({"claudeAiOauth": {"accessToken": "a", "refreshToken": "ra"},
+                           "mcpOAuth": {"vercel": {"accessToken": "v"}}})
+        stale = json.dumps({"claudeAiOauth": {"accessToken": "old", "refreshToken": "r-old"}})
+        fresh = json.dumps({"claudeAiOauth": {"accessToken": "new", "refreshToken": "r-new"}})
+        mock_kc.read_credentials.side_effect = [live, stale]
+        mock_refresh.return_value = fresh
+
+        switch_account("b@test.com", config_path)
+
+        snapshot = next(c.args[2] for c in mock_kc.write_credentials.call_args_list
+                        if c.args[0] == "claude-switcher:b@test.com")
+        assert json.loads(snapshot)["claudeAiOauth"]["accessToken"] == "new"
+
+        written = next(c.args[2] for c in mock_kc.write_credentials.call_args_list
+                       if c.args[0] == "Claude Code-credentials")
+        blob = json.loads(written)
+        assert blob["claudeAiOauth"]["accessToken"] == "new"
+        assert blob["mcpOAuth"] == {"vercel": {"accessToken": "v"}}
+
+    @patch("claude_switcher.core._write_oauth_account")
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.refresh_claude_credentials")
+    @patch("claude_switcher.core.keychain")
+    def test_revoked_snapshot_aborts_the_switch(
+        self, mock_kc, mock_refresh, mock_read_oauth, mock_write_oauth, tmp_path
+    ):
+        """A dead snapshot must not be written live — that is the Login expired loop."""
+        config_path = tmp_path / "accounts.json"
+        from claude_switcher.config import add_account
+        add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
+        add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
+
+        live = json.dumps({"claudeAiOauth": {"accessToken": "a", "refreshToken": "ra"}})
+        stale = json.dumps({"claudeAiOauth": {"accessToken": "old", "refreshToken": "r-old"}})
+        mock_kc.read_credentials.side_effect = [live, stale]
+        mock_refresh.side_effect = ClaudeCredentialsExpiredError("dead")
+
+        with pytest.raises(ClaudeCredentialsExpiredError):
+            switch_account("b@test.com", config_path)
+
+        for call in mock_kc.write_credentials.call_args_list:
+            assert call.args[0] != "Claude Code-credentials"
+
+    @patch("claude_switcher.core._write_oauth_account")
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.refresh_claude_credentials", return_value=None)
+    @patch("claude_switcher.core.keychain")
+    def test_offline_falls_back_to_stored_tokens(
+        self, mock_kc, mock_refresh, mock_read_oauth, mock_write_oauth, tmp_path
+    ):
+        config_path = tmp_path / "accounts.json"
+        from claude_switcher.config import add_account
+        add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
+        add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
+
+        live = json.dumps({"claudeAiOauth": {"accessToken": "a", "refreshToken": "ra"}})
+        stored = json.dumps({"claudeAiOauth": {"accessToken": "old", "refreshToken": "r-old"}})
+        mock_kc.read_credentials.side_effect = [live, stored]
+
+        switch_account("b@test.com", config_path)
+
+        written = next(c.args[2] for c in mock_kc.write_credentials.call_args_list
+                       if c.args[0] == "Claude Code-credentials")
+        assert json.loads(written)["claudeAiOauth"]["accessToken"] == "old"
