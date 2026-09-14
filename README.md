@@ -1,9 +1,14 @@
-# Claude/Codex Account Switcher
+# Claude Code Switcher for macOS
 
-[![Downloads](https://img.shields.io/github/downloads/Symbioose/claude-account-switcher/total?style=flat-square&label=downloads)](https://github.com/Symbioose/claude-account-switcher/releases)
-[![Latest release](https://img.shields.io/github/v/release/Symbioose/claude-account-switcher?style=flat-square)](https://github.com/Symbioose/claude-account-switcher/releases/latest)
+> **A fork of [Symbioose/claude-account-switcher](https://github.com/Symbioose/claude-account-switcher)
+> by [Emile Jouannet](https://github.com/Symbioose).** He wrote the app; this fork adds fixes for
+> five ways a saved sign-in was silently destroyed, and a dialog that lets you recover from the
+> sixth. They are offered back upstream in
+> [Symbioose/claude-account-switcher#11](https://github.com/Symbioose/claude-account-switcher/pull/11)
+> — if that merges, this fork exists only to ship builds.
+
 [![macOS](https://img.shields.io/badge/macOS-12%2B-000?style=flat-square&logo=apple)](#requirements)
-[![Homebrew](https://img.shields.io/badge/Homebrew-cask-fbb040?style=flat-square&logo=homebrew)](#install)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
 Switch between multiple Claude Code and Codex CLI accounts from your macOS menu bar.
 
@@ -30,13 +35,44 @@ Claude Switcher stores account backups in macOS Keychain and swaps the active CL
 
 ## Install
 
-### Homebrew
+Build it yourself — this fork publishes no cask yet:
 
 ```bash
-brew install --cask Symbioose/tap/claude-switcher
+git clone https://github.com/cdudek/claude-code-switcher-macos.git
+cd claude-code-switcher-macos
+python3.14 -m venv .venv && ./.venv/bin/pip install -e ".[dev]"
+./build_app.sh
+cp -R "dist/Claude Switcher.app" /Applications/
 ```
 
-Then launch **Claude Switcher** from Spotlight or `/Applications`.
+`build_app.sh` needs a real CPython (Homebrew's `python3.14`); py2app fails on uv's build
+with `zlib.__file__`. The upstream cask still works if you want the unfixed version:
+`brew install --cask Symbioose/tap/claude-switcher` — but `brew upgrade --cask` will
+overwrite a local build of this fork.
+
+## What this fork changes
+
+Every one of these destroys a saved sign-in with no visible error, so the failure shows up
+later as `Login expired · Please run /login` on an account that looked fine:
+
+1. **A snapshot could be saved with empty tokens.** Claude Code writes its Keychain entry in
+   stages; for about a second after login the record exists with empty token strings, and the
+   import accepted any non-empty string.
+2. **Switching wiped MCP server logins.** The blob holds `claudeAiOauth` *and* `mcpOAuth` —
+   tokens for Vercel, Notion, Linear and friends, which belong to the machine, not the
+   account. Switching replaced the blob wholesale.
+3. **Add Account wiped them too**, and worse: `claude auth logout` deletes the whole entry.
+4. **Saved pairs get revoked server-side.** Anthropic keeps one live sign-in per account, so a
+   `/login` anywhere revokes the saved one. The snapshot still looks perfect — non-empty
+   tokens, `expiresAt` hours away — and the API answers it with 401. Switching now refreshes
+   the pair first, which both proves it is real and keeps the snapshot from ageing out.
+5. **Add Account revoked the previously active account**, by calling `claude auth logout` on
+   the credentials it had just saved as that account's snapshot.
+6. **A revoked sign-in was a dead end in the UI** — an `Error` alert with a single OK button.
+   It now gets `Sign in again` / `Remove account` / `Cancel`.
+
+Full detail, with the measurements behind each:
+[the upstream PR](https://github.com/Symbioose/claude-account-switcher/pull/11).
 
 ### GitHub release
 
@@ -175,6 +211,17 @@ The app bundle inside the zip must be:
 Claude Switcher.app
 ```
 
+## Credits
+
+**[Emile Jouannet](https://github.com/Symbioose) wrote this app.** The menu bar UI, the
+Keychain-backed account store, the usage meters, auto-switch and the Codex support are all
+his — see [Symbioose/claude-account-switcher](https://github.com/Symbioose/claude-account-switcher).
+
+This fork adds credential-loss fixes and a recovery dialog, offered back upstream as
+[PR #11](https://github.com/Symbioose/claude-account-switcher/pull/11). Maintained by
+[Calvin Dudek](https://github.com/cdudek).
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Upstream declared MIT in `pyproject.toml` but shipped no
+license file; this fork adds the full text, crediting both copyright holders.
