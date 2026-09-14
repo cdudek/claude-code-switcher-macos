@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
+from claude_switcher.icons import DEFAULT_ICON
+
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "claude-switcher" / "accounts.json"
 CONFIG_VERSION = 2
 DEFAULT_PROVIDERS = ("claude", "codex")
@@ -27,6 +29,7 @@ class AppSettings:
         default_factory=lambda: {provider: False for provider in DEFAULT_PROVIDERS}
     )
     auto_switch_threshold: float = 100.0
+    icon: str = DEFAULT_ICON
 
 
 def _default_settings_dict() -> dict:
@@ -74,7 +77,11 @@ def _settings_from_dict(data: dict | None) -> AppSettings:
     except (TypeError, ValueError):
         threshold = defaults.auto_switch_threshold
 
-    return AppSettings(auto_switch=auto_switch, auto_switch_threshold=threshold)
+    icon = data.get("icon", defaults.icon)
+    if not isinstance(icon, str) or not icon:
+        icon = defaults.icon
+
+    return AppSettings(auto_switch=auto_switch, auto_switch_threshold=threshold, icon=icon)
 
 
 def load_accounts(path: Path = DEFAULT_CONFIG_PATH) -> list[AccountInfo]:
@@ -163,6 +170,13 @@ def is_auto_switch_enabled(provider: str, path: Path = DEFAULT_CONFIG_PATH) -> b
     """Return whether auto-switch is enabled for a provider."""
     settings = load_settings(path)
     return bool(settings.auto_switch.get(provider, False))
+
+
+def set_icon(slug: str, path: Path = DEFAULT_CONFIG_PATH) -> None:
+    """Persist the chosen menu bar icon."""
+    settings = load_settings(path)
+    settings.icon = slug
+    save_settings(settings, path)
 
 
 def set_auto_switch_enabled(

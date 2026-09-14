@@ -31,8 +31,10 @@ from claude_switcher.config import (
     get_active_account,
     load_settings,
     set_auto_switch_enabled,
+    set_icon,
     DEFAULT_CONFIG_PATH,
 )
+from claude_switcher.icons import ICON_LABELS, icon_path, is_known
 from claude_switcher.core import (
     check_claude_cli,
     import_current_account,
@@ -86,9 +88,9 @@ def _on_main_thread(fn):
 
 class ClaudeSwitcherApp(rumps.App):
     def __init__(self):
-        icon_path = Path(__file__).parent / "resources" / "icon.png"
-        super().__init__("", icon=str(icon_path), template=True, quit_button=None)
         self.config_path = DEFAULT_CONFIG_PATH
+        chosen = load_settings(self.config_path).icon
+        super().__init__("", icon=icon_path(chosen), template=True, quit_button=None)
         self._usage_cache: dict[tuple[str, str], str] = {}
         self._usage_state_cache: dict[tuple[str, str], UsageState] = {}
         self._usage_items: dict[tuple[str, str], rumps.MenuItem] = {}
@@ -162,6 +164,7 @@ class ClaudeSwitcherApp(rumps.App):
 
         self.menu.add(rumps.separator)
         self._add_auto_switch_menu()
+        self._add_icon_menu()
         self.menu.add(rumps.MenuItem("\u271A  Add Claude account...", callback=self._on_add_claude_account))
         self.menu.add(rumps.MenuItem("\u271A  Add Codex account...", callback=self._on_add_codex_account))
         self.menu.add(rumps.MenuItem("\u21BB  Refresh usage", callback=self._on_refresh_usage))
@@ -178,6 +181,38 @@ class ClaudeSwitcherApp(rumps.App):
 
         self.menu.add(rumps.separator)
         self.menu.add(rumps.MenuItem("\u23FB  Quit", callback=rumps.quit_application))
+
+    def _add_icon_menu(self):
+        """Let the icon be changed from the bar it sits in.
+
+        Every mark is a compromise between saying "switch", saying "AI" and
+        staying legible at 22 points, and which compromise is right is a matter
+        of taste and of what else is already in your menu bar. Cheaper to ship
+        the set than to argue for one.
+        """
+        current = load_settings(self.config_path).icon
+        menu = rumps.MenuItem("\u25C7  Icon")
+        for slug, label in ICON_LABELS.items():
+            item = rumps.MenuItem(label, callback=self._on_pick_icon)
+            item.state = 1 if slug == current else 0
+            item._slug = slug
+            menu.add(item)
+        self.menu.add(menu)
+
+    def _on_pick_icon(self, sender):
+        """Swap the menu bar icon and remember the choice."""
+        slug = sender._slug
+        if not is_known(slug):
+            rumps.alert(
+                title="Icon not available",
+                message=f"This build does not ship an icon named {slug}.",
+            )
+            return
+        set_icon(slug, self.config_path)
+        # rumps redraws the status item when either property is assigned
+        self.icon = icon_path(slug)
+        self.template = True
+        self._rebuild_menu()
 
     def _add_provider_section(self, provider: str, accounts):
         header = rumps.MenuItem(f"\u2500\u2500 {PROVIDER_LABELS[provider]} \u2500\u2500")
