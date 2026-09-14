@@ -24,37 +24,48 @@ echo "Staging"
 mkdir -p "$STAGE/.background"
 ditto "$APP" "$STAGE/Claude Switcher.app"
 ln -s /Applications "$STAGE/Applications"
+# A symlink to Terminal, for the same reason the Applications alias is one: it is
+# not a downloaded file, so Gatekeeper has nothing to quarantine and double-click
+# just works. The audience is engineers - hand them a prompt, not a wizard.
+ln -s /System/Applications/Utilities/Terminal.app "$STAGE/Terminal"
 cp resources/dmg-background.png "$STAGE/.background/background.png"
 
-# Gatekeeper blocks a downloaded build because it is ad-hoc signed rather than
-# notarised. This is the one-click way out, shipped inside the image so nobody
-# has to find and retype an xattr command. It is itself quarantined, so it needs
-# right-click > Open - which the background image says.
-cat > "$STAGE/Open Anyway.command" <<'CMDEOF'
-#!/bin/bash
-APP="/Applications/Claude Switcher.app"
-echo
-echo "  Claude Switcher — allow it to open"
-echo "  ─────────────────────────────────────────────────────────"
-echo
-if [ ! -d "$APP" ]; then
-  echo "  Claude Switcher is not in your Applications folder yet."
-  echo "  Drag it there first, then run this again."
-  echo
-  read -n 1 -s -r -p "  Press any key to close."
-  exit 1
-fi
-echo "  Removing the quarantine flag macOS attached when you downloaded it."
-echo "  That flag is why it says Apple could not verify the app: this build is"
-echo "  signed, but not by a paid Apple Developer account."
-echo
-xattr -dr com.apple.quarantine "$APP" && echo "  Done." || echo "  Could not remove it."
-echo "  Opening Claude Switcher — look for the icon in your menu bar."
-open "$APP"
-echo
-read -n 1 -s -r -p "  Press any key to close."
-CMDEOF
-chmod +x "$STAGE/Open Anyway.command"
+# macOS 15 removed right-click > Open for quarantined items, so a shell script
+# shipped in here cannot unblock anything: the script is quarantined too, and
+# Sequoia refuses it outright. An earlier version of this image carried an
+# "Open Anyway.command" that simply did not run. This file plus the Terminal
+# alias next to it replace it.
+cat > "$STAGE/How to open this.txt" <<'TXTEOF'
+Claude Switcher - first launch
+==============================
+
+Drag the app into Applications, then run this once:
+
+    xattr -dr com.apple.quarantine "/Applications/Claude Switcher.app"
+
+Terminal is sitting right next to this file in the disk image. Double-click it,
+paste the line, open the app.
+
+
+Why
+---
+
+The app is not signed with an Apple Developer ID and not notarised, so
+Gatekeeper refuses it. The command strips the com.apple.quarantine flag that
+macOS attaches to anything downloaded.
+
+Without Terminal: open the app, let it be refused, then go to System Settings >
+Privacy & Security > Security and click Open Anyway. The button only appears
+after a blocked attempt.
+
+Build it yourself and none of this applies, because nothing downloaded it:
+
+    git clone https://github.com/cdudek/claude-code-switcher-macos.git
+    cd claude-code-switcher-macos && ./install.sh
+
+
+The app runs in the menu bar, not the Dock. Look for the brackets icon top right.
+TXTEOF
 
 echo "Creating the image"
 RW="$STAGE/../rw.dmg"
@@ -85,9 +96,13 @@ if [ "${CAPTURE:-0}" != "1" ] && [ -f "$DS" ]; then
 else
 
 echo "Laying out the window"
-osascript <<'APPLESCRIPT'
+# Target the volume by the name it actually got. If a "Claude Switcher" image is
+# already mounted - a released DMG the user opened, say - this one mounts as
+# "Claude Switcher 1", and a hardcoded name lays out somebody else's window.
+osascript - "$(basename "$MOUNT")" <<'APPLESCRIPT'
+on run argv
 tell application "Finder"
-  tell disk "Claude Switcher"
+  tell disk (item 1 of argv)
     open
     set current view of container window to icon view
     set toolbar visible of container window to false
@@ -100,13 +115,15 @@ tell application "Finder"
     set background picture of opts to file ".background:background.png"
     set position of item "Claude Switcher.app" of container window to {196, 196}
     set position of item "Applications" of container window to {500, 196}
-    set position of item "Open Anyway.command" of container window to {500, 404}
+    set position of item "How to open this.txt" of container window to {196, 404}
+    set position of item "Terminal" of container window to {500, 404}
     close
     open
     update without registering applications
     delay 2
   end tell
 end tell
+end run
 APPLESCRIPT
 
 fi

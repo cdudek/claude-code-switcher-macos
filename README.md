@@ -29,15 +29,22 @@ Developer account** sign and notarise this? It did not — notarising costs $99/
 The build is signed, just not by a registered developer, and macOS treats that the
 same as unsigned.
 
-The disk image ships **Open Anyway.command** for exactly this. Right-click it,
-choose Open, and it clears the flag and launches the app. Or do it yourself:
+Clear the flag once:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Claude Switcher.app"
 ```
 
-Or open **System Settings → Privacy & Security**, scroll to Security, and click
-**Open Anyway**.
+The disk image has a **Terminal** shortcut next to the app and a
+**How to open this.txt** carrying that line, so it is a double-click and a paste.
+
+No Terminal? Open the app, let macOS refuse it, then go to **System Settings →
+Privacy & Security → Security** and click **Open Anyway**. The button only shows
+up after a blocked attempt.
+
+macOS 15 removed right-click → Open for downloaded apps, so ignore any guide that
+tells you to use it — including v0.7.1 of this one, which shipped an
+`Open Anyway.command` that could not work.
 
 ## What it does
 

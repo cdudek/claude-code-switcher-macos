@@ -95,7 +95,9 @@ jobs:
             xattr -dr com.apple.quarantine "/Applications/Claude Switcher.app"
             ```
 
-            or open **System Settings → Privacy & Security**, scroll to Security,
-            and click **Open Anyway** next to the blocked-app message.
+            The disk image has a **Terminal** shortcut next to the app for exactly
+            this. Or open the app, let macOS refuse it, then go to **System Settings
+            → Privacy & Security → Security** and click **Open Anyway** — that
+            button only appears after a blocked attempt.
 
             Already running an older version? It updates itself — **Updates → Check now**.
