@@ -89,6 +89,39 @@ def _carry_over_mcp_oauth(target_creds: str, live_creds: str | None) -> str:
     return json.dumps(target)
 
 
+def _mcp_section(blob: str | None) -> dict:
+    """Return the mcpOAuth object from a credential blob, or an empty dict."""
+    if not blob:
+        return {}
+    try:
+        data = json.loads(blob)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    mcp = data.get("mcpOAuth")
+    return mcp if isinstance(mcp, dict) else {}
+
+
+def _restore_mcp_oauth(preserved_mcp: dict, email: str, keychain_account: str) -> None:
+    """Put the machine's MCP tokens back after a logout/login cycle wiped them.
+
+    `claude auth logout` plus the Keychain cleanup in add_new_account() delete
+    the whole entry, and the blob Claude Code writes on the next login carries
+    no mcpOAuth section — so adding an account silently logs every MCP server
+    out. Write the preserved tokens into both the live entry and the snapshot
+    that was just taken from it.
+    """
+    if not preserved_mcp:
+        return
+    live = keychain.read_credentials(CLAUDE_SERVICE)
+    if not has_valid_tokens(live):
+        return
+    merged = _carry_over_mcp_oauth(live, json.dumps({"mcpOAuth": preserved_mcp}))
+    keychain.write_credentials(CLAUDE_SERVICE, keychain_account, merged)
+    keychain.write_credentials(f"claude-switcher:{email}", keychain_account, merged)
+
+
 def _read_oauth_account() -> dict | None:
     """Read the oauthAccount object from ~/.claude.json."""
     try:
@@ -258,8 +291,11 @@ def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -
 def add_new_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | None:
     """Add a new account via claude auth login. Returns AccountInfo or None if cancelled."""
     active = get_active_account(config_path)
+    current_creds = keychain.read_credentials(CLAUDE_SERVICE)
+    # The logout + Keychain cleanup below drop the machine's MCP server tokens
+    # along with the account; they are not account-specific, so keep them.
+    preserved_mcp = _mcp_section(current_creds)
     if active:
-        current_creds = keychain.read_credentials(CLAUDE_SERVICE)
         if has_valid_tokens(current_creds):
             keychain.write_credentials(
                 f"claude-switcher:{active.email}", active.keychain_account, current_creds
@@ -282,7 +318,10 @@ def add_new_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | No
         return None
 
     try:
-        return import_current_account(config_path)
+        account = import_current_account(config_path)
+        if account:
+            _restore_mcp_oauth(preserved_mcp, account.email, account.keychain_account)
+        return account
     except Exception:
         # Login succeeded but import failed — restore previous account
         if active:

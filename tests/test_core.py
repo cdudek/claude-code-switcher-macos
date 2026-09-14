@@ -367,3 +367,59 @@ class TestMcpOAuthCarriedOver:
         mcp = json.loads(written)["mcpOAuth"]
         assert mcp["vercel"]["accessToken"] == "target"
         assert mcp["notion"]["accessToken"] == "n"
+
+
+class TestAddAccountPreservesMcpOAuth:
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.get_auth_status")
+    @patch("claude_switcher.core.run_auth_login", return_value=True)
+    @patch("claude_switcher.core.run_auth_logout")
+    @patch("claude_switcher.core.keychain")
+    def test_mcp_tokens_survive_add_account(
+        self, mock_kc, mock_logout, mock_login, mock_status, mock_oauth, tmp_path
+    ):
+        """`claude auth logout` wipes the whole blob, MCP server tokens included."""
+        config_path = tmp_path / "accounts.json"
+        from claude_switcher.config import add_account
+        add_account(AccountInfo("a@test.com", "pro", "Org A", True, "usera"), config_path)
+
+        before = json.dumps({
+            "claudeAiOauth": {"accessToken": "a", "refreshToken": "ra"},
+            "mcpOAuth": {"vercel": {"accessToken": "v"}, "notion": {"accessToken": "n"}},
+        })
+        after_login = json.dumps({"claudeAiOauth": {"accessToken": "new", "refreshToken": "rn"}})
+        # reads: pre-logout, import loop, _restore_mcp_oauth
+        mock_kc.read_credentials.side_effect = [before, after_login, after_login]
+        mock_kc.read_account_attribute.return_value = "newuser"
+        mock_kc.delete_credentials.return_value = False
+        mock_status.return_value = {"email": "new@test.com", "subscriptionType": "max", "orgName": "O"}
+
+        result = add_new_account(config_path)
+
+        assert result is not None and result.email == "new@test.com"
+        final_live = next(
+            c.args[2] for c in reversed(mock_kc.write_credentials.call_args_list)
+            if c.args[0] == "Claude Code-credentials"
+        )
+        blob = json.loads(final_live)
+        assert blob["claudeAiOauth"]["accessToken"] == "new"
+        assert blob["mcpOAuth"] == {"vercel": {"accessToken": "v"}, "notion": {"accessToken": "n"}}
+
+    @patch("claude_switcher.core._read_oauth_account", return_value=None)
+    @patch("claude_switcher.core.get_auth_status")
+    @patch("claude_switcher.core.run_auth_login", return_value=True)
+    @patch("claude_switcher.core.run_auth_logout")
+    @patch("claude_switcher.core.keychain")
+    def test_no_mcp_tokens_to_preserve_is_a_noop(
+        self, mock_kc, mock_logout, mock_login, mock_status, mock_oauth, tmp_path
+    ):
+        config_path = tmp_path / "accounts.json"
+        after_login = json.dumps({"claudeAiOauth": {"accessToken": "new", "refreshToken": "rn"}})
+        mock_kc.read_credentials.side_effect = [None, after_login]
+        mock_kc.read_account_attribute.return_value = "newuser"
+        mock_kc.delete_credentials.return_value = False
+        mock_status.return_value = {"email": "new@test.com", "subscriptionType": "max", "orgName": "O"}
+
+        assert add_new_account(config_path) is not None
+        for call in mock_kc.write_credentials.call_args_list:
+            assert call.args[0] != "Claude Code-credentials"
