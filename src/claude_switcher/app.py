@@ -19,6 +19,7 @@ from claude_switcher.codex_core import (
     switch_codex_account,
     add_new_codex_account,
     remove_codex_account,
+    CodexCredentialsExpiredError,
 )
 from claude_switcher.codex_usage import (
     fetch_active_codex_usage,
@@ -38,6 +39,7 @@ from claude_switcher.core import (
     switch_account,
     add_new_account,
     remove_saved_account,
+    ClaudeCredentialsExpiredError,
 )
 from claude_switcher.usage import fetch_usage_for_account, fetch_active_usage, claude_usage_state
 from claude_switcher.usage_state import UsageState
@@ -48,6 +50,32 @@ PROVIDER_LABELS = {
     "codex": "Codex CLI",
 }
 AUTO_SWITCH_COOLDOWN_SECONDS = 60
+
+# rumps.alert maps its three buttons onto Cocoa's return codes: ok -> 1,
+# other -> -1, cancel -> 0. Naming them keeps the dialog handler readable.
+ALERT_OK, ALERT_OTHER, ALERT_CANCEL = 1, -1, 0
+
+EXPIRED_SESSION_TITLE = "Session expired - {email}"
+EXPIRED_SESSION_HINT = (
+    "\n\nThis happens when the account signs in somewhere else: a /login in the "
+    "terminal, an Add Account here, or another machine. Only one sign-in per "
+    "account stays valid, so the saved one was revoked.\n\n"
+    "Signing in again replaces the saved session. Removing drops it from the list."
+)
+
+
+def is_expired_session(exc: BaseException) -> bool:
+    """True when a switch failed because the saved sign-in was revoked.
+
+    Worth its own dialog rather than the generic error alert: nothing is broken,
+    the account just needs signing in again, and the user can act on it from here.
+    """
+    return isinstance(exc, (ClaudeCredentialsExpiredError, CodexCredentialsExpiredError))
+
+
+def expired_session_action(button: int) -> str:
+    """Map the dialog's button code to what the app should do next."""
+    return {ALERT_OK: "signin", ALERT_OTHER: "remove"}.get(button, "cancel")
 
 
 def _on_main_thread(fn):
@@ -221,6 +249,7 @@ class ClaudeSwitcherApp(rumps.App):
 
         def _switch():
             error = None
+            expired = False
             try:
                 if provider == "claude":
                     switch_account(email, self.config_path)
@@ -228,9 +257,13 @@ class ClaudeSwitcherApp(rumps.App):
                     switch_codex_account(email, self.config_path)
             except Exception as exc:
                 error = str(exc)
+                expired = is_expired_session(exc)
 
             def _finish():
                 self._switch_in_progress.discard(provider)
+                if expired:
+                    self._handle_expired_session(provider, email, error)
+                    return
                 if error:
                     rumps.alert(title="Error", message=error)
                 else:
@@ -245,6 +278,50 @@ class ClaudeSwitcherApp(rumps.App):
             _on_main_thread(_finish)
 
         threading.Thread(target=_switch, daemon=True).start()
+
+    def _handle_expired_session(self, provider: str, email: str, message: str) -> None:
+        """Offer the two things that actually fix a revoked sign-in.
+
+        The old behaviour was a dead-end "Error" alert: the switch had silently
+        left the account selected but unusable, and the only way out was to guess
+        that Remove account followed by Add account was the fix.
+        """
+        choice = expired_session_action(
+            rumps.alert(
+                title=EXPIRED_SESSION_TITLE.format(email=email),
+                message=(message or "This saved session is no longer valid.") + EXPIRED_SESSION_HINT,
+                ok="Sign in again",
+                other="Remove account",
+                cancel="Cancel",
+            )
+        )
+        if choice == "signin":
+            if provider == "claude":
+                self._on_add_claude_account(None)
+            else:
+                self._on_add_codex_account(None)
+        elif choice == "remove":
+            self._remove_account(provider, email)
+        # "cancel" leaves the account in place; the previous session is untouched
+        self._rebuild_menu()
+
+    def _remove_account(self, provider: str, email: str) -> None:
+        """Drop a saved account, reporting a failure instead of doing nothing."""
+        try:
+            if provider == "claude":
+                remove_saved_account(email, self.config_path)
+            else:
+                remove_codex_account(email, self.config_path)
+        except Exception as exc:
+            rumps.alert(title="Could not remove account", message=f"{email}\n\n{exc}")
+            return
+        rumps.notification(
+            title="Claude Switcher",
+            subtitle=f"{PROVIDER_LABELS[provider]} account removed",
+            message=email,
+        )
+        self._rebuild_menu()
+        self._fetch_all_usage()
 
     def _on_add_claude_account(self, _):
         """Add a new Claude Code account via claude auth login."""
@@ -274,7 +351,11 @@ class ClaudeSwitcherApp(rumps.App):
                 title, subtitle, message = "Claude Switcher", "Error", str(exc)
 
             def _finish():
-                rumps.notification(title=title, subtitle=subtitle, message=message)
+                if subtitle == "Error":
+                    # An alert cannot be silently dropped the way a notification can
+                    rumps.alert(title="Could not add account", message=message)
+                else:
+                    rumps.notification(title=title, subtitle=subtitle, message=message)
                 self._rebuild_menu()
                 self._fetch_all_usage()
 
@@ -310,7 +391,11 @@ class ClaudeSwitcherApp(rumps.App):
                 title, subtitle, message = "Claude Switcher", "Error", str(exc)
 
             def _finish():
-                rumps.notification(title=title, subtitle=subtitle, message=message)
+                if subtitle == "Error":
+                    # An alert cannot be silently dropped the way a notification can
+                    rumps.alert(title="Could not add account", message=message)
+                else:
+                    rumps.notification(title=title, subtitle=subtitle, message=message)
                 self._rebuild_menu()
                 self._fetch_all_usage()
 
@@ -484,17 +569,7 @@ class ClaudeSwitcherApp(rumps.App):
             )
             return
 
-        if provider == "claude":
-            remove_saved_account(email, self.config_path)
-        else:
-            remove_codex_account(email, self.config_path)
-        rumps.notification(
-            title="Claude Switcher",
-            subtitle=f"{PROVIDER_LABELS[provider]} account removed",
-            message=email,
-        )
-        self._rebuild_menu()
-        self._fetch_all_usage()
+        self._remove_account(provider, email)
 
 
 def main():
