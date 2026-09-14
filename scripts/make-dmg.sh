@@ -62,8 +62,15 @@ rm -f "$RW"
 hdiutil create -srcfolder "$STAGE" -volname "$VOL" -fs HFS+ \
   -format UDRW -ov -quiet "$RW"
 
-DEV=$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | grep '^/dev/' | head -1 | awk '{print $1}')
-MOUNT="/Volumes/$VOL"
+# Read the mount point from hdiutil rather than assuming /Volumes/$VOL. If a
+# volume of that name is already mounted, macOS appends " 1" and everything
+# after this writes into the wrong place - which on CI meant the layout was
+# copied somewhere that was not the image.
+ATTACH=$(hdiutil attach -readwrite -noverify -noautoopen "$RW")
+DEV=$(echo "$ATTACH" | grep '^/dev/' | head -1 | awk '{print $1}')
+MOUNT=$(echo "$ATTACH" | grep -o '/Volumes/.*$' | head -1)
+[ -n "$DEV" ] && [ -d "$MOUNT" ] || { echo "Could not mount the image" >&2; exit 1; }
+echo "  mounted $DEV at $MOUNT"
 sleep 2
 
 # CI has no logged-in Finder, so `tell application "Finder"` cannot lay out a
@@ -74,6 +81,7 @@ DS="resources/dmg-DS_Store"
 if [ "${CAPTURE:-0}" != "1" ] && [ -f "$DS" ]; then
   echo "Applying the saved window layout"
   cp "$DS" "$MOUNT/.DS_Store"
+  sync
 else
 
 echo "Laying out the window"
@@ -109,6 +117,9 @@ fi
 # broken AppleScript ships an image with no drag arrow and nobody notices.
 if ! grep -aq "background.png" "$MOUNT/.DS_Store" 2>/dev/null; then
   echo "ERROR: the window background was not applied - the image would ship without its drag arrow" >&2
+  echo "  mount:    $MOUNT" >&2
+  echo "  .DS_Store: $(ls -l "$MOUNT/.DS_Store" 2>&1)" >&2
+  echo "  saved layout: $(ls -l "$DS" 2>&1)" >&2
   hdiutil detach "$DEV" -quiet || true
   exit 1
 fi
