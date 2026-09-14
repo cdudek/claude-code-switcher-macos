@@ -26,9 +26,8 @@ CLAUDE_STATE_FILE = Path.home() / ".claude.json"
 CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
 CLAUDE_SESSION_EXPIRED_MESSAGE = (
-    "This saved Claude session is no longer valid. Anthropic revokes an account's "
-    "tokens when that account signs in again, so a /login or an Add Account since "
-    "this snapshot was taken has invalidated it. Remove the account and add it again."
+    "This saved Claude session ended when the account signed in somewhere else. "
+    "Sign in again to restore it."
 )
 
 

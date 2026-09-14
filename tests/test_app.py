@@ -11,6 +11,8 @@ from claude_switcher.app import (
     ALERT_CANCEL,
     ALERT_OK,
     ALERT_OTHER,
+    EXPIRED_SESSION_MESSAGE,
+    EXPIRED_SESSION_TITLE,
     expired_session_action,
     is_expired_session,
 )
@@ -53,3 +55,26 @@ class TestExpiredSessionAction:
 
     def test_the_three_codes_are_distinct(self):
         assert len({ALERT_OK, ALERT_OTHER, ALERT_CANCEL}) == 3
+
+
+class TestExpiredSessionCopy:
+    """The dialog is the whole recovery path, so its copy is worth pinning."""
+
+    def test_title_names_the_account(self):
+        t = EXPIRED_SESSION_TITLE.format(email="name@example.com")
+        assert t == "Signed out of name@example.com"
+
+    def test_message_is_two_short_sentences(self):
+        assert EXPIRED_SESSION_MESSAGE.count(".") == 2
+        assert len(EXPIRED_SESSION_MESSAGE.split()) <= 25
+
+    def test_message_does_not_restate_the_buttons(self):
+        """The buttons say what the actions are; repeating them was the bloat."""
+        low = EXPIRED_SESSION_MESSAGE.lower()
+        assert "remove" not in low
+        assert "sign in again" not in low
+
+    def test_message_has_no_jargon(self):
+        low = EXPIRED_SESSION_MESSAGE.lower()
+        for word in ("token", "oauth", "keychain", "revoke", "snapshot", "credential"):
+            assert word not in low, f"{word!r} is developer language, not user language"

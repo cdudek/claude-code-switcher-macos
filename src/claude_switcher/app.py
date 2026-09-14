@@ -55,12 +55,13 @@ AUTO_SWITCH_COOLDOWN_SECONDS = 60
 # other -> -1, cancel -> 0. Naming them keeps the dialog handler readable.
 ALERT_OK, ALERT_OTHER, ALERT_CANCEL = 1, -1, 0
 
-EXPIRED_SESSION_TITLE = "Session expired - {email}"
-EXPIRED_SESSION_HINT = (
-    "\n\nThis happens when the account signs in somewhere else: a /login in the "
-    "terminal, an Add Account here, or another machine. Only one sign-in per "
-    "account stays valid, so the saved one was revoked.\n\n"
-    "Signing in again replaces the saved session. Removing drops it from the list."
+# The dialog writes its own copy rather than showing the exception text. The
+# exception explains the cause to a developer; a person facing the dialog needs
+# one sentence and two buttons. Showing both said the same thing twice, at length.
+EXPIRED_SESSION_TITLE = "Signed out of {email}"
+EXPIRED_SESSION_MESSAGE = (
+    "Signing in to this account somewhere else ended this saved session. "
+    "Only one sign-in stays valid at a time."
 )
 
 
@@ -262,7 +263,7 @@ class ClaudeSwitcherApp(rumps.App):
             def _finish():
                 self._switch_in_progress.discard(provider)
                 if expired:
-                    self._handle_expired_session(provider, email, error)
+                    self._handle_expired_session(provider, email)
                     return
                 if error:
                     rumps.alert(title="Error", message=error)
@@ -279,7 +280,7 @@ class ClaudeSwitcherApp(rumps.App):
 
         threading.Thread(target=_switch, daemon=True).start()
 
-    def _handle_expired_session(self, provider: str, email: str, message: str) -> None:
+    def _handle_expired_session(self, provider: str, email: str) -> None:
         """Offer the two things that actually fix a revoked sign-in.
 
         The old behaviour was a dead-end "Error" alert: the switch had silently
@@ -289,7 +290,7 @@ class ClaudeSwitcherApp(rumps.App):
         choice = expired_session_action(
             rumps.alert(
                 title=EXPIRED_SESSION_TITLE.format(email=email),
-                message=(message or "This saved session is no longer valid.") + EXPIRED_SESSION_HINT,
+                message=EXPIRED_SESSION_MESSAGE,
                 ok="Sign in again",
                 other="Remove account",
                 cancel="Cancel",
