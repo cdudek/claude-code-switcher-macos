@@ -9,6 +9,7 @@ from claude_switcher import keychain
 from claude_switcher.usage_state import UsageState, UsageWindow
 
 USAGE_URL = "https://api.anthropic.com/oauth/usage"
+USAGE_TIMEOUT_SECONDS = 10
 
 
 def _extract_token(creds_json: str) -> str | None:
@@ -18,6 +19,68 @@ def _extract_token(creds_json: str) -> str | None:
         return data.get("claudeAiOauth", {}).get("accessToken")
     except (json.JSONDecodeError, AttributeError):
         return None
+
+
+def _is_expired(creds_json: str) -> bool:
+    """True when the blob's accessToken is past its expiresAt."""
+    try:
+        expires = json.loads(creds_json).get("claudeAiOauth", {}).get("expiresAt")
+    except (json.JSONDecodeError, AttributeError):
+        return False
+    if not isinstance(expires, (int, float)):
+        return False
+    return expires / 1000 <= datetime.now(timezone.utc).timestamp()
+
+
+def _request_usage(token: str) -> tuple[int, dict | None]:
+    """Ask the usage endpoint. Returns (status, payload); status 0 means no answer."""
+    req = urllib.request.Request(
+        USAGE_URL,
+        headers={
+            "Accept": "application/json",
+            "anthropic-beta": "oauth-2025-04-20",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "claude-code/2.1.11",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=USAGE_TIMEOUT_SECONDS) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, None
+    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, OSError):
+        return 0, None
+
+
+def _refresh_stored(service: str, creds: str) -> str | None:
+    """Mint a new token pair for a stored blob and write it back where it came from.
+
+    A snapshot nobody has switched to in eight hours holds a dead accessToken, and
+    nothing else in the app refreshes it - which is why an idle account's usage row
+    went blank overnight. The refresh rotates the pair server-side, so if this blob
+    is also the pair Claude Code is using right now, the live entry has to be moved
+    with it or the running session is the thing we just revoked.
+    """
+    # Imported here: core reads config and Keychain at import time in some paths,
+    # and usage is imported by the menu build.
+    from claude_switcher.core import ClaudeCredentialsExpiredError, refresh_claude_credentials
+
+    try:
+        refreshed = refresh_claude_credentials(creds)
+    except ClaudeCredentialsExpiredError:
+        return None
+    if not refreshed:
+        return None
+
+    account = keychain.read_account_attribute(service) or service
+    keychain.write_credentials(service, account, refreshed)
+
+    if service != keychain.CLAUDE_SERVICE:
+        live = keychain.read_credentials(keychain.CLAUDE_SERVICE)
+        if live and _extract_token(live) == _extract_token(creds):
+            live_account = keychain.read_account_attribute(keychain.CLAUDE_SERVICE) or service
+            keychain.write_credentials(keychain.CLAUDE_SERVICE, live_account, refreshed)
+    return refreshed
 
 
 def fetch_usage(service: str) -> dict | None:
@@ -37,20 +100,25 @@ def fetch_usage(service: str) -> dict | None:
     if not token:
         return None
 
-    req = urllib.request.Request(
-        USAGE_URL,
-        headers={
-            "Accept": "application/json",
-            "anthropic-beta": "oauth-2025-04-20",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "claude-code/2.1.11",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return json.loads(resp.read())
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError):
+    if _is_expired(creds):
+        creds = _refresh_stored(service, creds) or creds
+        token = _extract_token(creds) or token
+
+    status, payload = _request_usage(token)
+    if payload is not None:
+        return payload
+    # Only 401 says the token is the problem. Refreshing on a network blip would
+    # rotate the pair for nothing and throw away a refresh token that still works.
+    if status != 401:
         return None
+
+    refreshed = _refresh_stored(service, creds)
+    if not refreshed:
+        return None
+    new_token = _extract_token(refreshed)
+    if not new_token:
+        return None
+    return _request_usage(new_token)[1]
 
 
 def fetch_usage_for_account(email: str) -> dict | None:
@@ -92,14 +160,14 @@ def _format_reset_delta(resets_at: str) -> str:
 def claude_usage_state(usage: dict | None) -> UsageState:
     """Convert Claude usage data into a normalized usage state."""
     if not usage:
-        return UsageState(available=False, display="Usage indisponible")
+        return UsageState(available=False, display="Usage unavailable")
 
     parts = []
     windows = []
     five_h = usage.get("five_hour", {})
     seven_d = usage.get("seven_day", {})
 
-    for label, window in (("5h", five_h), ("7j", seven_d)):
+    for label, window in (("5h", five_h), ("7d", seven_d)):
         if not isinstance(window, dict) or "utilization" not in window:
             continue
         try:
@@ -113,7 +181,7 @@ def claude_usage_state(usage: dict | None) -> UsageState:
         windows.append(UsageWindow(label=label, percent=percent, resets_in=reset))
 
     if not parts:
-        return UsageState(available=False, display="Usage indisponible")
+        return UsageState(available=False, display="Usage unavailable")
 
     return UsageState(available=True, display=" | ".join(parts), windows=tuple(windows))
 

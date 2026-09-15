@@ -67,13 +67,13 @@ class TestFormatUsage:
         }
         result = format_usage(usage)
         assert "5h 43% (2h 0m)" in result
-        assert "7j 18% (5d 14h)" in result
+        assert "7d 18% (5d 14h)" in result
 
     def test_returns_unavailable_for_none(self):
-        assert format_usage(None) == "Usage indisponible"
+        assert format_usage(None) == "Usage unavailable"
 
     def test_returns_unavailable_for_empty(self):
-        assert format_usage({}) == "Usage indisponible"
+        assert format_usage({}) == "Usage unavailable"
 
     def test_usage_state_marks_exhausted_at_100(self):
         usage = {
@@ -116,3 +116,125 @@ class TestFetchUsageForAccount:
     def test_returns_none_when_no_creds(self, mock_read):
         mock_read.return_value = None
         assert fetch_usage_for_account("test@test.com") is None
+
+
+def _blob(token="tok", expires_in_hours=8.0, refresh="ref"):
+    ms = int((datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)).timestamp() * 1000)
+    return json.dumps({"claudeAiOauth": {
+        "accessToken": token, "refreshToken": refresh, "expiresAt": ms}})
+
+
+class TestIsExpired:
+    def test_future_expiry_is_live(self):
+        from claude_switcher.usage import _is_expired
+        assert _is_expired(_blob(expires_in_hours=1)) is False
+
+    def test_past_expiry_is_expired(self):
+        from claude_switcher.usage import _is_expired
+        assert _is_expired(_blob(expires_in_hours=-1)) is True
+
+    def test_missing_expiry_is_not_expired(self):
+        from claude_switcher.usage import _is_expired
+        assert _is_expired(json.dumps({"claudeAiOauth": {"accessToken": "t"}})) is False
+
+
+class TestFetchUsageRefresh:
+    """A stored token dies after eight hours and nothing else renews it."""
+
+    def _patches(self, stored, request_results, refreshed="REFRESHED"):
+        calls = {"requests": [], "written": []}
+
+        def _request(token):
+            calls["requests"].append(token)
+            return request_results[len(calls["requests"]) - 1]
+
+        def _write(service, account, password):
+            calls["written"].append((service, password))
+
+        return calls, _request, _write
+
+    def test_401_refreshes_and_retries(self, monkeypatch):
+        import claude_switcher.usage as usage
+        import claude_switcher.core as core
+        stored = _blob(token="OLD")
+        new = _blob(token="NEW")
+        calls, _request, _write = self._patches(stored, [(401, None), (200, {"five_hour": {}})])
+        monkeypatch.setattr(usage.keychain, "read_credentials",
+                            lambda s: stored if s != usage.keychain.CLAUDE_SERVICE else None)
+        monkeypatch.setattr(usage.keychain, "read_account_attribute", lambda s: "acct")
+        monkeypatch.setattr(usage.keychain, "write_credentials", _write)
+        monkeypatch.setattr(core, "refresh_claude_credentials", lambda c: new)
+        monkeypatch.setattr(usage, "_request_usage", _request)
+
+        assert usage.fetch_usage("claude-switcher:a@b.c") == {"five_hour": {}}
+        assert calls["requests"] == ["OLD", "NEW"]
+        assert calls["written"] == [("claude-switcher:a@b.c", new)]
+
+    def test_network_failure_does_not_rotate_the_token(self, monkeypatch):
+        """A blip must not burn a refresh token that still works."""
+        import claude_switcher.usage as usage
+        import claude_switcher.core as core
+        stored = _blob(token="OLD")
+        calls, _request, _write = self._patches(stored, [(0, None)])
+        refreshed = []
+        monkeypatch.setattr(usage.keychain, "read_credentials", lambda s: stored)
+        monkeypatch.setattr(usage.keychain, "write_credentials", _write)
+        monkeypatch.setattr(core, "refresh_claude_credentials",
+                            lambda c: refreshed.append(c) or _blob(token="NEW"))
+        monkeypatch.setattr(usage, "_request_usage", _request)
+
+        assert usage.fetch_usage("claude-switcher:a@b.c") is None
+        assert refreshed == []
+        assert calls["written"] == []
+
+    def test_expired_blob_refreshes_before_asking(self, monkeypatch):
+        import claude_switcher.usage as usage
+        import claude_switcher.core as core
+        stored = _blob(token="OLD", expires_in_hours=-1)
+        new = _blob(token="NEW")
+        calls, _request, _write = self._patches(stored, [(200, {"seven_day": {}})])
+        monkeypatch.setattr(usage.keychain, "read_credentials",
+                            lambda s: stored if s != usage.keychain.CLAUDE_SERVICE else None)
+        monkeypatch.setattr(usage.keychain, "read_account_attribute", lambda s: "acct")
+        monkeypatch.setattr(usage.keychain, "write_credentials", _write)
+        monkeypatch.setattr(core, "refresh_claude_credentials", lambda c: new)
+        monkeypatch.setattr(usage, "_request_usage", _request)
+
+        assert usage.fetch_usage("claude-switcher:a@b.c") == {"seven_day": {}}
+        assert calls["requests"] == ["NEW"]
+
+    def test_rotating_the_live_pair_moves_the_live_entry_too(self, monkeypatch):
+        """Refreshing a snapshot that IS the running session must not revoke it."""
+        import claude_switcher.usage as usage
+        import claude_switcher.core as core
+        stored = _blob(token="OLD", expires_in_hours=-1)
+        new = _blob(token="NEW")
+        calls, _request, _write = self._patches(stored, [(200, {"five_hour": {}})])
+        monkeypatch.setattr(usage.keychain, "read_credentials", lambda s: stored)
+        monkeypatch.setattr(usage.keychain, "read_account_attribute", lambda s: "acct")
+        monkeypatch.setattr(usage.keychain, "write_credentials", _write)
+        monkeypatch.setattr(core, "refresh_claude_credentials", lambda c: new)
+        monkeypatch.setattr(usage, "_request_usage", _request)
+
+        usage.fetch_usage("claude-switcher:a@b.c")
+        assert calls["written"] == [
+            ("claude-switcher:a@b.c", new),
+            (usage.keychain.CLAUDE_SERVICE, new),
+        ]
+
+    def test_unrelated_snapshot_leaves_the_live_entry_alone(self, monkeypatch):
+        import claude_switcher.usage as usage
+        import claude_switcher.core as core
+        stored = _blob(token="OLD", expires_in_hours=-1)
+        live = _blob(token="SOMEONE_ELSE")
+        new = _blob(token="NEW")
+        calls, _request, _write = self._patches(stored, [(200, {"five_hour": {}})])
+        monkeypatch.setattr(usage.keychain, "read_credentials",
+                            lambda s: live if s == usage.keychain.CLAUDE_SERVICE else stored)
+        monkeypatch.setattr(usage.keychain, "read_account_attribute", lambda s: "acct")
+        monkeypatch.setattr(usage.keychain, "write_credentials", _write)
+        monkeypatch.setattr(core, "refresh_claude_credentials", lambda c: new)
+        monkeypatch.setattr(usage, "_request_usage", _request)
+
+        usage.fetch_usage("claude-switcher:a@b.c")
+        assert calls["written"] == [("claude-switcher:a@b.c", new)]

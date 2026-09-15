@@ -16,6 +16,7 @@ from claude_switcher.auto_switch import (
 )
 from claude_switcher.codex_core import (
     check_codex_cli,
+    live_codex_email,
     import_current_codex_account,
     switch_codex_account,
     add_new_codex_account,
@@ -30,6 +31,7 @@ from claude_switcher.codex_usage import (
 from claude_switcher.config import (
     load_accounts,
     get_active_account,
+    set_active_account,
     load_settings,
     set_auto_switch_enabled,
     set_auto_update,
@@ -40,6 +42,7 @@ from claude_switcher import updater
 from claude_switcher.icons import ICON_LABELS, icon_path, is_known
 from claude_switcher.core import (
     check_claude_cli,
+    live_claude_email,
     import_current_account,
     switch_account,
     add_new_account,
@@ -315,14 +318,49 @@ class ClaudeSwitcherApp(rumps.App):
 
         threading.Thread(target=_work, daemon=True).start()
 
+    @staticmethod
+    def _is_row_active(email: str, live_email: str | None, recorded_active: bool) -> bool:
+        """Which row gets the filled dot.
+
+        Extracted so it can be tested: inlined in the menu builder, dropping the
+        live_email half still passed every test in the suite.
+        """
+        if live_email:
+            return email == live_email
+        return recorded_active
+
+    def _live_active_email(self, provider: str) -> str | None:
+        """Who is signed in right now, and repair our record when it disagrees.
+
+        Reading `active` out of the config file made the selected-account dot lie
+        whenever anything signed in outside the app. Worse, the click handler used
+        the same record to decide "you are already on this account" and returned
+        without doing anything, so the wrong row was marked and the right row was
+        unclickable. Both now follow the live credentials.
+        """
+        try:
+            email = live_claude_email() if provider == "claude" else live_codex_email()
+        except Exception:
+            return None
+        if not email:
+            return None
+        recorded = get_active_account(self.config_path, provider=provider)
+        if (recorded.email if recorded else None) != email:
+            if any(a.email == email and a.provider == provider
+                   for a in load_accounts(self.config_path)):
+                set_active_account(email, self.config_path, provider=provider)
+        return email
+
     def _add_provider_section(self, provider: str, accounts):
         header = rumps.MenuItem(f"\u2500\u2500 {PROVIDER_LABELS[provider]} \u2500\u2500")
         header.set_callback(None)
         self.menu.add(header)
 
+        live_email = self._live_active_email(provider)
         for account in accounts:
             has_creds = self._has_credentials(account)
-            prefix = "\u25C9  " if account.active else "\u25CB  "
+            is_active = self._is_row_active(account.email, live_email, account.active)
+            prefix = "\u25C9  " if is_active else "\u25CB  "
             if has_creds:
                 label = f"{prefix}{account.email} ({account.subscription_type})"
                 callback = (
@@ -371,8 +409,8 @@ class ClaudeSwitcherApp(rumps.App):
         self._switch_account("codex", sender._email)
 
     def _switch_account(self, provider: str, email: str):
-        active = get_active_account(self.config_path, provider=provider)
-        if active and active.email == email:
+        live_email = self._live_active_email(provider)
+        if live_email == email:
             return
         if provider in self._switch_in_progress:
             rumps.notification(

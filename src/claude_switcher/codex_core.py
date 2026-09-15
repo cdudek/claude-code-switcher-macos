@@ -245,6 +245,14 @@ def backup_codex_credentials(creds: str) -> str | None:
     return email
 
 
+def live_codex_email() -> str | None:
+    """The account Codex is signed in as right now, per ~/.codex/auth.json."""
+    try:
+        return _codex_email_from_credentials(read_codex_credentials())
+    except Exception:
+        return None
+
+
 def _codex_email_from_credentials(creds_json: str | None = None) -> str | None:
     """Extract email from Codex credentials."""
     data = _credentials_data(creds_json)

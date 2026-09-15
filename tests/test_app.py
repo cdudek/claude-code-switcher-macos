@@ -78,3 +78,77 @@ class TestExpiredSessionCopy:
         low = EXPIRED_SESSION_MESSAGE.lower()
         for word in ("token", "oauth", "keychain", "revoke", "snapshot", "credential"):
             assert word not in low, f"{word!r} is developer language, not user language"
+
+
+class _Stub:
+    """Just enough of the app to call _live_active_email unbound."""
+    config_path = "/nowhere/accounts.json"
+
+
+class TestLiveActiveEmail:
+    """The selected-account dot follows the live sign-in, not our own record."""
+
+    def _run(self, monkeypatch, *, live, recorded, saved):
+        import claude_switcher.app as app
+        written = []
+        monkeypatch.setattr(app, "live_claude_email", lambda: live)
+        monkeypatch.setattr(app, "get_active_account",
+                            lambda path, provider: _Account(recorded) if recorded else None)
+        monkeypatch.setattr(app, "load_accounts",
+                            lambda path: [_Account(e) for e in saved])
+        monkeypatch.setattr(app, "set_active_account",
+                            lambda email, path, provider: written.append(email))
+        result = app.ClaudeSwitcherApp._live_active_email(_Stub(), "claude")
+        return result, written
+
+    def test_live_sign_in_wins_over_the_record(self, monkeypatch):
+        result, _ = self._run(monkeypatch, live="b@x.com", recorded="a@x.com",
+                              saved=["a@x.com", "b@x.com"])
+        assert result == "b@x.com"
+
+    def test_drift_repairs_the_record(self, monkeypatch):
+        _, written = self._run(monkeypatch, live="b@x.com", recorded="a@x.com",
+                               saved=["a@x.com", "b@x.com"])
+        assert written == ["b@x.com"]
+
+    def test_agreeing_record_is_not_rewritten(self, monkeypatch):
+        _, written = self._run(monkeypatch, live="a@x.com", recorded="a@x.com",
+                               saved=["a@x.com"])
+        assert written == []
+
+    def test_unsaved_live_account_is_not_written_to_the_record(self, monkeypatch):
+        result, written = self._run(monkeypatch, live="stranger@x.com", recorded="a@x.com",
+                                    saved=["a@x.com"])
+        assert result == "stranger@x.com"
+        assert written == []
+
+    def test_unreadable_live_state_falls_back_to_the_record(self, monkeypatch):
+        result, written = self._run(monkeypatch, live=None, recorded="a@x.com",
+                                    saved=["a@x.com"])
+        assert result is None
+        assert written == []
+
+
+class _Account:
+    def __init__(self, email, provider="claude"):
+        self.email = email
+        self.provider = provider
+
+
+class TestIsRowActive:
+    """Mutation note: this decision was inline and untested - dropping the live
+    half passed the whole suite."""
+
+    def _call(self, email, live, recorded):
+        from claude_switcher.app import ClaudeSwitcherApp
+        return ClaudeSwitcherApp._is_row_active(email, live, recorded)
+
+    def test_live_account_is_marked(self):
+        assert self._call("b@x.com", "b@x.com", False) is True
+
+    def test_stale_record_is_not_marked(self):
+        assert self._call("a@x.com", "b@x.com", True) is False
+
+    def test_without_a_live_reading_the_record_decides(self):
+        assert self._call("a@x.com", None, True) is True
+        assert self._call("a@x.com", None, False) is False

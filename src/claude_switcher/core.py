@@ -198,6 +198,21 @@ def _read_oauth_account() -> dict | None:
         return None
 
 
+def live_claude_email() -> str | None:
+    """The account Claude Code is signed in as right now, per ~/.claude.json.
+
+    The menu used to read `active` out of our own config file. That is a record of
+    the last switch we performed, not of who is signed in: a `claude /login` in a
+    terminal, or a switch that failed half way, leaves the record pointing at an
+    account that is not the one in use. Ask the source instead.
+    """
+    account = _read_oauth_account()
+    if not isinstance(account, dict):
+        return None
+    email = account.get("emailAddress")
+    return email if isinstance(email, str) and email else None
+
+
 def _write_oauth_account(oauth_account: dict) -> None:
     """Write the oauthAccount object into ~/.claude.json (merge, not overwrite)."""
     try:
