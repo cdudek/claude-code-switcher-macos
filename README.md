@@ -183,6 +183,35 @@ The connector list is read with `GET /v1/mcp_servers` and the header
 so a failed read shows no line at all — never "0 connectors", which would blame
 an account for an endpoint that moved.
 
+## Known security limit: the credential blob passes through `argv`
+
+`keychain.write_credentials` calls `security add-generic-password -s ... -w <blob>`,
+which puts the whole credential - access token **and** refresh token - into the
+child process's command line. Any process running as the same user can read it
+out of `ps` with no Keychain prompt and no ACL check, which is the protection
+the Keychain was chosen for. It matters more here than in most apps, because
+this one deliberately holds every account: an observer watching a few switches
+collects all of them, and a refresh token outlives access-token expiry.
+
+Three fixes were tried and none is shippable yet. Recorded so the next attempt
+does not repeat them:
+
+1. **Omit `-w` and pass the password on stdin** - stores an **empty** password
+   and still exits 0. Silently destroys the credential.
+2. **`security -i` with the command on stdin** - cannot parse a shell-quoted
+   JSON blob; exits 2.
+3. **`SecKeychainAddGenericPassword` / `SecKeychainItemCreateFromContent` via
+   ctypes** - writes correctly and round-trips byte-identically, but the item is
+   created with an ACL that does not trust the `security` binary, so every
+   subsequent read prompts. Neither an empty trusted-application array
+   (`SecAccessCreate`) nor a NULL application list on each ACL
+   (`SecACLSetContents`) produced the permissive ACL that `security` itself
+   creates.
+
+The real fix is to move **reads as well as writes** onto the Security framework
+so one binary owns the ACL, plus a migration for the items `security` already
+wrote. That is a deliberate piece of work, not a patch.
+
 ## Known limits
 
 - **A `/login` you run in the terminal revokes that account's saved session.** One
