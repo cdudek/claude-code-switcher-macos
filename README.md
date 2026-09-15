@@ -190,24 +190,43 @@ the Keychain was chosen for. It matters more here than in most apps, because
 this one deliberately holds every account: an observer watching a few switches
 collects all of them, and a refresh token outlives access-token expiry.
 
-Three fixes were tried and none is shippable yet. Recorded so the next attempt
+**This cannot be fixed while the app is ad-hoc signed**, and that is the whole
+finding. The fix is to write through `SecKeychainAddGenericPassword`, where the
+secret is a length-and-buffer pair that never becomes an argument. That works -
+it round-trips a real blob byte-identically. But an item written that way gets
+an ACL bound to the writing binary, and this app's designated requirement is a
+list of `cdhash` values:
+
+```
+$ codesign -dv "Code Agent Switcher.app"
+Signature=adhoc
+TeamIdentifier=not set
+$ codesign -d -r- "Code Agent Switcher.app"
+designated => cdhash H"ffb640fa..." or cdhash H"cde060f8..." or ...
+```
+
+A cdhash is the binary's content hash, so **every release changes it**, and an
+ACL bound to the old build locks the new build out of every saved account.
+Measured: the same binary reads its own item fine (status 0); a different binary
+gets `-128` and a password prompt, and so does the `security` CLI.
+
+Three workarounds were tried and none avoids this. Recorded so the next attempt
 does not repeat them:
 
 1. **Omit `-w` and pass the password on stdin** - stores an **empty** password
    and still exits 0. Silently destroys the credential.
 2. **`security -i` with the command on stdin** - cannot parse a shell-quoted
    JSON blob; exits 2.
-3. **`SecKeychainAddGenericPassword` / `SecKeychainItemCreateFromContent` via
-   ctypes** - writes correctly and round-trips byte-identically, but the item is
-   created with an ACL that does not trust the `security` binary, so every
-   subsequent read prompts. Neither an empty trusted-application array
-   (`SecAccessCreate`) nor a NULL application list on each ACL
-   (`SecACLSetContents`) produced the permissive ACL that `security` itself
-   creates.
+3. **An "allow any application" ACL** - neither an empty trusted-application
+   array (`SecAccessCreate`) nor a NULL application list on each ACL
+   (`SecACLSetContents`) reproduces the permissive ACL that `security` creates.
+   Both still prompt.
 
-The real fix is to move **reads as well as writes** onto the Security framework
-so one binary owns the ACL, plus a migration for the items `security` already
-wrote. That is a deliberate piece of work, not a patch.
+**The precondition for fixing it is a Developer ID signing identity.** With one,
+the designated requirement becomes the signing identity rather than the binary
+hash, it survives updates, and reads and writes can both move onto the Security
+framework. Until then the CLI write is the only thing that keeps the app working
+across its own updates, and the exposure is the price of that.
 
 ## Known limits
 
