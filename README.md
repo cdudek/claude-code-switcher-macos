@@ -134,6 +134,46 @@ healthy in the menu.
 The measurements behind each are in
 [the upstream PR](https://github.com/Symbioose/claude-account-switcher/pull/11).
 
+## claude.ai connectors do not survive a switch, and nothing can make them
+
+If Linear, Gmail, HubSpot or another **claude.ai connector** stops working right
+after you switch accounts, the switcher is not the problem and no switcher can
+be. Those connectors are authorised on Anthropic's side against one account and
+organisation. Nothing about them is on your machine — no token, no refresh
+token, no expiry — so there is nothing for this app to copy. The account you
+moved to simply never authorised them.
+
+A **local MCP server** is the opposite case and already works: its OAuth token
+lives in the `Claude Code-credentials` Keychain blob, which this app carries to
+every account on every switch.
+
+The app now shows which is which. Each account card carries a line saying how
+many claude.ai connectors that account has, and a card you are about to switch
+to says what the move costs — `Switching drops Linear, Slack +2` — before you
+click it.
+
+Two ways to stop a connector breaking, and they are different trades:
+
+1. **Authorise it on each account.** Sign in as the other account, open
+   <https://claude.ai/customize/connectors> and connect it there. Keeps the
+   connector's icons and MCP Apps. One browser round trip per account per
+   service, forever.
+2. **Run it as your own MCP server instead.** One auth, and it then works on
+   every account because the token lands in the Keychain blob:
+
+   ```bash
+   claude mcp add --transport http --scope user linear https://mcp.linear.app/mcp
+   ```
+
+   Then `/mcp` and authenticate once. Claude Code expects the overlap and says
+   so in its own messages ("plugin server(s) that duplicate claude.ai
+   connectors"), so running both is fine.
+
+The connector list is read with `GET /v1/mcp_servers` and the header
+`anthropic-beta: mcp-servers-2025-12-04`. That is undocumented and can change,
+so a failed read shows no line at all — never "0 connectors", which would blame
+an account for an endpoint that moved.
+
 ## Known limits
 
 - **A `/login` you run in the terminal revokes that account's saved session.** One

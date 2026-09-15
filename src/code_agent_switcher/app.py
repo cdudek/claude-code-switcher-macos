@@ -60,6 +60,7 @@ from code_agent_switcher.usage_state import UsageState
 from code_agent_switcher.ledger import load_records, since_days, tokens_between
 from code_agent_switcher.report import write_report
 from datetime import timedelta
+from code_agent_switcher import connectors as connectors_api
 from code_agent_switcher import ui, usage_log
 from code_agent_switcher.accounts_window import AccountsWindowController
 
@@ -71,6 +72,9 @@ from Foundation import NSRunLoop, NSRunLoopCommonModes, NSTimer
 # nobody is looking, and polling four accounts every five minutes for an empty
 # screen is four requests a minute nobody asked for.
 OPEN_POLL_SECONDS = 15.0
+# Connectors change when someone authorises one by hand, which is rare, so this
+# is read on a much longer cycle than usage even though it rides the same poll.
+CONNECTORS_TTL_SECONDS = 600.0
 # The budget rates change slowly; recomputing them per decision would re-read a
 # week of transcripts for nothing.
 BUDGET_RATE_TTL_SECONDS = 3600.0
@@ -167,6 +171,11 @@ class ClaudeSwitcherApp(rumps.App):
         self._report_in_progress = False
         self._budget_rates_cache: dict = {}
         self._budget_rates_at = 0.0
+        # Which claude.ai connectors each account has. Read far less often than
+        # usage: it changes when someone authorises a connector by hand, which
+        # is rare, and the endpoint is slower.
+        self._connectors_cache: dict = {}
+        self._connectors_at: dict = {}
         self._update_timer = rumps.Timer(self._on_periodic_update_check, UPDATE_CHECK_INTERVAL_SECONDS)
         self._update_timer.start()
         # The first tick of a rumps.Timer fires immediately; defer the launch
@@ -288,12 +297,15 @@ class ClaudeSwitcherApp(rumps.App):
         on_click = None
         if not active and email:
             on_click = lambda: self._switch_account(provider, ref)  # noqa: E731
+        footer, warns = self._connector_footer(key, active)
         return ui.card_row(
             email, plan, active,
             ui.rows_for(state) if state else [],
             reason=getattr(state, "reason", None) if state else "reading\u2026",
             on_click=on_click,
             org=org,
+            footer=footer,
+            footer_warns=warns,
         )
 
     # -- polling ---------------------------------------------------------
@@ -721,6 +733,7 @@ class ClaudeSwitcherApp(rumps.App):
                     is_live = live_by_provider.get(account.provider) == account.ref
                     state = self._fetch_usage_state(account, is_live)
                     self._usage_state_cache[key] = state
+                    self._connectors_for(account)
                     # Every poll is thrown away otherwise, and the series is the
                     # only place the real budget per account can be read from.
                     # A switch in flight means the live credentials are moving
@@ -752,6 +765,52 @@ class ClaudeSwitcherApp(rumps.App):
                 _on_main_thread(_finish)
 
         threading.Thread(target=_fetch, daemon=True).start()
+
+    def _connectors_for(self, account):
+        """This account's connector list, cached, or None when it cannot be read.
+
+        Codex has no claude.ai connectors, so it is not asked.
+        """
+        if account.provider != "claude":
+            return None
+        key = account_key(account)
+        age = time.time() - self._connectors_at.get(key, 0.0)
+        if key in self._connectors_cache and age < CONNECTORS_TTL_SECONDS:
+            return self._connectors_cache[key]
+        rows, _reason = connectors_api.fetch_connectors_for_account(account.ref)
+        # A failed read keeps the last good answer rather than replacing it with
+        # None: a blip should not make the footer disappear and reappear.
+        if rows is not None:
+            self._connectors_cache[key] = rows
+            self._connectors_at[key] = time.time()
+        return self._connectors_cache.get(key)
+
+    def _connector_footer(self, key, active: bool) -> tuple[str, bool]:
+        """The line under the bars: what this account has, or what it would cost.
+
+        A claude.ai connector is authorised on Anthropic's side per account, so
+        switching takes every one of them away and this app has nothing to copy.
+        Saying so before the switch is the whole point - people read the loss as
+        the switcher breaking their MCP setup.
+        """
+        rows = self._connectors_cache.get(key)
+        if rows is None:
+            return "", False
+        if active:
+            names = connectors_api.connected(rows)
+            return (f"{len(names)} claude.ai connector{'' if len(names) == 1 else 's'}",
+                    False)
+        live_key = self._live_connector_key(key[0])
+        lost = connectors_api.lost_by_switching(self._connectors_cache.get(live_key), rows)
+        if not lost:
+            return f"{len(connectors_api.connected(rows))} claude.ai connectors", False
+        shown = ", ".join(lost[:2])
+        more = f" +{len(lost) - 2}" if len(lost) > 2 else ""
+        return f"Switching drops {shown}{more}", True
+
+    def _live_connector_key(self, provider: str):
+        ref = self._live_active_ref(provider)
+        return (provider, ref) if ref else None
 
     def _fetch_usage_state(self, account, is_live: bool) -> UsageState:
         try:

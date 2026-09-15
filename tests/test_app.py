@@ -164,3 +164,98 @@ class TestIsRowActive:
     def test_without_a_live_reading_the_record_decides(self):
         assert self._call("a@x.com", None, True) is True
         assert self._call("a@x.com", None, False) is False
+
+
+class TestConnectorFooter:
+    """The line under the bars. A claude.ai connector is authorised per account
+    on Anthropic's side, so a switch takes every one of them away and this app
+    has nothing to copy - saying so before the switch is the whole point."""
+
+    def _app(self, cache, live_ref="live@x.com"):
+        from code_agent_switcher.app import ClaudeSwitcherApp
+        app = ClaudeSwitcherApp.__new__(ClaudeSwitcherApp)
+        app._connectors_cache = cache
+        app._connectors_at = {}
+        app._live_active_ref = lambda provider: live_ref
+        return app
+
+    @staticmethod
+    def _rows(*pairs):
+        from code_agent_switcher.connectors import Connector
+        return tuple(Connector(n, r) for n, r in pairs)
+
+    LIVE = ("claude", "live@x.com")
+    OTHER = ("claude", "other@x.com")
+
+    def test_the_active_account_is_told_how_many_it_has(self):
+        app = self._app({self.LIVE: self._rows(("Linear", "connected"),
+                                               ("Gmail", "never_connected_no_auto_connect"))})
+        assert app._connector_footer(self.LIVE, True) == ("1 claude.ai connector", False)
+
+    def test_the_count_is_pluralised(self):
+        app = self._app({self.LIVE: self._rows(("Linear", "connected"),
+                                               ("Slack", "connected"))})
+        assert app._connector_footer(self.LIVE, True) == ("2 claude.ai connectors", False)
+
+    def test_a_switch_that_costs_something_says_what(self):
+        app = self._app({
+            self.LIVE: self._rows(("Linear", "connected"), ("Slack", "connected")),
+            self.OTHER: self._rows(("Linear", "never_connected_no_auto_connect"),
+                                   ("Slack", "connected")),
+        })
+        assert app._connector_footer(self.OTHER, False) == ("Switching drops Linear", True)
+
+    def test_more_than_two_losses_are_counted_not_listed(self):
+        """Four names do not fit the card, and a clipped line reads as a bug."""
+        app = self._app({
+            self.LIVE: self._rows(("Linear", "connected"), ("Slack", "connected"),
+                                  ("Gmail", "connected"), ("Figma", "connected")),
+            self.OTHER: (),
+        })
+        assert app._connector_footer(self.OTHER, False) == (
+            "Switching drops Linear, Slack +2", True)
+
+    def test_a_switch_that_costs_nothing_does_not_warn(self):
+        app = self._app({
+            self.LIVE: self._rows(("Linear", "connected")),
+            self.OTHER: self._rows(("Linear", "connected")),
+        })
+        assert app._connector_footer(self.OTHER, False) == ("1 claude.ai connectors", False)
+
+    def test_an_unread_account_shows_no_line_at_all(self):
+        """Not "0 connectors" - claiming an account has none because the API
+        did not answer is worse than saying nothing."""
+        app = self._app({})
+        assert app._connector_footer(self.OTHER, False) == ("", False)
+
+    def test_an_unread_live_account_does_not_produce_a_warning(self):
+        app = self._app({self.OTHER: self._rows(("Linear", "connected"))})
+        assert app._connector_footer(self.OTHER, False) == ("1 claude.ai connectors", False)
+
+    @staticmethod
+    def _account(provider="claude", email="other@x.com"):
+        from code_agent_switcher.config import AccountInfo
+        return AccountInfo(email, "", "", False, "acct", provider=provider)
+
+    def test_codex_is_never_asked(self, monkeypatch):
+        """Codex has no claude.ai connectors, so the call would be a wasted
+        round trip on every poll for every Codex account."""
+        from code_agent_switcher import app as app_mod
+        calls = []
+        monkeypatch.setattr(app_mod.connectors_api, "fetch_connectors_for_account",
+                            lambda ref: calls.append(ref) or ((), None))
+        app = self._app({})
+        assert app._connectors_for(self._account(provider="codex")) is None
+        assert calls == []
+
+    def test_a_failed_read_keeps_the_last_good_answer(self, monkeypatch):
+        """Otherwise one timeout makes the footer vanish and come back, which
+        reads as the connectors themselves flickering."""
+        from code_agent_switcher import app as app_mod
+        good = self._rows(("Linear", "connected"))
+        app = self._app({self.OTHER: good})
+        app._connectors_at[self.OTHER] = 0.0  # force a re-read
+        monkeypatch.setattr(app_mod.connectors_api, "fetch_connectors_for_account",
+                            lambda ref: (None, "no answer from the API"))
+        assert app._connectors_for(self._account()) == good
+        assert app._connectors_cache[self.OTHER] == good

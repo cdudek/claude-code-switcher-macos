@@ -230,8 +230,14 @@ CARD_GAP = 8.0
 RADIO_WIDTH = 20.0
 
 
+# A footer line is the same height as a usage row, so a card that has one is
+# exactly one row taller.
+FOOTER_HEIGHT = ROW_HEIGHT
+
+
 def account_card(email: str, plan: str, active: bool, rows, reason: str | None = None,
-                 on_click=None, org: str = "") -> AppKit.NSView:
+                 on_click=None, org: str = "", footer: str = "",
+                 footer_warns: bool = False) -> AppKit.NSView:
     """One account: identity on top, a bar per limit window under it.
 
     `rows` is a sequence of (label, percent, resets_in or None). An account with
@@ -240,6 +246,8 @@ def account_card(email: str, plan: str, active: bool, rows, reason: str | None =
     """
     body = list(rows)
     height = CARD_TOP + max(1, len(body)) * ROW_HEIGHT + CARD_BOTTOM
+    if footer:
+        height += FOOTER_HEIGHT
     card = CardView.alloc().initWithFrame_active_(
         NSMakeRect(PAD, 0, PANEL_WIDTH - 2 * PAD, height), active
     )
@@ -287,6 +295,16 @@ def account_card(email: str, plan: str, active: bool, rows, reason: str | None =
             NSMakeRect(left + frame.size.width + 8, top + 1, width, 16), badge
         )
         card.addSubview_(pill)
+
+    if footer:
+        # Sits under the bars, in the warning colour only when a switch would
+        # actually cost something. A line that is always orange stops being read.
+        colour = (AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(*ORANGE, 1.0)
+                  if footer_warns else AppKit.NSColor.secondaryLabelColor())
+        line = _label(footer, 11.0, colour)
+        line.setFrame_(NSMakeRect(inner, CARD_BOTTOM - 2,
+                                  PANEL_WIDTH - 2 * PAD - 2 * inner, 16))
+        card.addSubview_(line)
 
     y = height - CARD_TOP - ROW_HEIGHT + 4
     if not body:
@@ -395,9 +413,11 @@ def set_symbol(item, name: str) -> None:
 
 
 def card_row(email: str, plan: str, active: bool, rows, reason: str | None = None,
-             on_click=None, org: str = "") -> AppKit.NSView:
+             on_click=None, org: str = "", footer: str = "",
+             footer_warns: bool = False) -> AppKit.NSView:
     """A card in a full-width wrapper: side padding, and a gap below it."""
-    card = account_card(email, plan, active, rows, reason, on_click=on_click, org=org)
+    card = account_card(email, plan, active, rows, reason, on_click=on_click, org=org,
+                        footer=footer, footer_warns=footer_warns)
     if on_click is not None:
         card.setOnClick_(on_click)
     height = card.frame().size.height

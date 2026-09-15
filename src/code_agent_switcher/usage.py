@@ -84,18 +84,16 @@ def _refresh_stored(service: str, creds: str) -> str | None:
     return refreshed
 
 
-def fetch_usage_detail(service: str) -> tuple[dict | None, str | None]:
-    """Fetch usage, and say why when there is none.
+def authorized_fetch(service: str, request) -> tuple[dict | None, str | None]:
+    """Call `request(token)` as `service`, refreshing the token once on a 401.
 
-    The menu used to print a bare "Usage unavailable" for six different causes -
-    no saved credentials, a revoked sign-in, a rate limit, a timeout - which made
-    the one case that needs the user to act indistinguishable from a blip.
+    The retry dance is the same for every OAuth-protected endpoint and is the
+    part that is easy to get wrong: refresh on a network blip and you rotate a
+    working pair for nothing. It lives here once so a second endpoint cannot
+    drift from it.
 
-    Response format on success:
-        {
-            "five_hour": {"utilization": 42.5, "resets_at": "..."},
-            "seven_day": {"utilization": 18.3, "resets_at": "..."}
-        }
+    `request` takes a token and returns (status, payload); payload is None when
+    there is no answer to give.
     """
     creds = keychain.read_credentials(service)
     if not creds:
@@ -109,7 +107,7 @@ def fetch_usage_detail(service: str) -> tuple[dict | None, str | None]:
         creds = _refresh_stored(service, creds) or creds
         token = _extract_token(creds) or token
 
-    status, payload = _request_usage(token)
+    status, payload = request(token)
     if payload is not None:
         return payload, None
     # Only 401 says the token is the problem. Refreshing on a network blip would
@@ -123,10 +121,26 @@ def fetch_usage_detail(service: str) -> tuple[dict | None, str | None]:
     new_token = _extract_token(refreshed)
     if not new_token:
         return None, "signed out, sign in again"
-    status, payload = _request_usage(new_token)
+    status, payload = request(new_token)
     if payload is not None:
         return payload, None
     return None, _status_reason(status)
+
+
+def fetch_usage_detail(service: str) -> tuple[dict | None, str | None]:
+    """Fetch usage, and say why when there is none.
+
+    The menu used to print a bare "Usage unavailable" for six different causes -
+    no saved credentials, a revoked sign-in, a rate limit, a timeout - which made
+    the one case that needs the user to act indistinguishable from a blip.
+
+    Response format on success:
+        {
+            "five_hour": {"utilization": 42.5, "resets_at": "..."},
+            "seven_day": {"utilization": 18.3, "resets_at": "..."}
+        }
+    """
+    return authorized_fetch(service, _request_usage)
 
 
 def _status_reason(status: int) -> str:
