@@ -27,7 +27,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from claude_switcher import __version__
+from code_agent_switcher import __version__
 
 REPO = "cdudek/code-agent-switcher"
 RELEASES_URL = f"https://api.github.com/repos/{REPO}/releases/latest"

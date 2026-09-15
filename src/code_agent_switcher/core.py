@@ -9,8 +9,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from claude_switcher import keychain
-from claude_switcher.config import (
+from code_agent_switcher import keychain
+from code_agent_switcher.config import (
     AccountInfo,
     add_account,
     get_active_account,

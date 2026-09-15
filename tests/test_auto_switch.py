@@ -1,10 +1,10 @@
-from claude_switcher.auto_switch import (
+from code_agent_switcher.auto_switch import (
     account_key,
     should_auto_switch,
     choose_auto_switch_target,
 )
-from claude_switcher.config import AccountInfo
-from claude_switcher.usage_state import UsageState, UsageWindow
+from code_agent_switcher.config import AccountInfo
+from code_agent_switcher.usage_state import UsageState, UsageWindow
 
 
 def _account(email, provider="claude", active=False):

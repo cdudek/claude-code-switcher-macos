@@ -9,13 +9,13 @@ from pathlib import Path
 import rumps
 from Foundation import NSOperationQueue
 
-from claude_switcher import keychain
-from claude_switcher.auto_switch import (
+from code_agent_switcher import keychain
+from code_agent_switcher.auto_switch import (
     account_key,
     choose_auto_switch_target,
     should_auto_switch,
 )
-from claude_switcher.codex_core import (
+from code_agent_switcher.codex_core import (
     check_codex_cli,
     live_codex_email,
     import_current_codex_account,
@@ -24,12 +24,12 @@ from claude_switcher.codex_core import (
     remove_codex_account,
     CodexCredentialsExpiredError,
 )
-from claude_switcher.codex_usage import (
+from code_agent_switcher.codex_usage import (
     fetch_active_codex_usage,
     fetch_codex_usage_for_account,
     codex_usage_state,
 )
-from claude_switcher.config import (
+from code_agent_switcher.config import (
     load_accounts,
     get_active_account,
     set_active_account,
@@ -38,9 +38,9 @@ from claude_switcher.config import (
     set_auto_update,
     DEFAULT_CONFIG_PATH,
 )
-from claude_switcher import updater
-from claude_switcher.icons import icon_path
-from claude_switcher.core import (
+from code_agent_switcher import updater
+from code_agent_switcher.icons import icon_path
+from code_agent_switcher.core import (
     check_claude_cli,
     live_claude_email,
     import_current_account,
@@ -49,10 +49,10 @@ from claude_switcher.core import (
     remove_saved_account,
     ClaudeCredentialsExpiredError,
 )
-from claude_switcher.usage import fetch_usage_detail_for_account, fetch_active_usage_detail, claude_usage_state
-from claude_switcher.usage_state import ROW_INDENT, UsageState, usage_rows
-from claude_switcher.ledger import load_records, since_days
-from claude_switcher.report import write_report
+from code_agent_switcher.usage import fetch_usage_detail_for_account, fetch_active_usage_detail, claude_usage_state
+from code_agent_switcher.usage_state import ROW_INDENT, UsageState, usage_rows
+from code_agent_switcher.ledger import load_records, since_days
+from code_agent_switcher.report import write_report
 
 # A month is long enough to see a trend and short enough to read in a few
 # seconds; the whole transcript tree here is 1.3 GB.

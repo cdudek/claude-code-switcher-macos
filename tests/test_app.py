@@ -7,7 +7,7 @@ the dead-end "Error" alert came from.
 
 import pytest
 
-from claude_switcher.app import (
+from code_agent_switcher.app import (
     ALERT_CANCEL,
     ALERT_OK,
     ALERT_OTHER,
@@ -16,8 +16,8 @@ from claude_switcher.app import (
     expired_session_action,
     is_expired_session,
 )
-from claude_switcher.codex_core import CodexCredentialsExpiredError
-from claude_switcher.core import ClaudeCredentialsExpiredError
+from code_agent_switcher.codex_core import CodexCredentialsExpiredError
+from code_agent_switcher.core import ClaudeCredentialsExpiredError
 
 
 class TestIsExpiredSession:
@@ -89,7 +89,7 @@ class TestLiveActiveEmail:
     """The selected-account dot follows the live sign-in, not our own record."""
 
     def _run(self, monkeypatch, *, live, recorded, saved):
-        import claude_switcher.app as app
+        import code_agent_switcher.app as app
         written = []
         monkeypatch.setattr(app, "live_claude_email", lambda: live)
         monkeypatch.setattr(app, "get_active_account",
@@ -140,7 +140,7 @@ class TestIsRowActive:
     half passed the whole suite."""
 
     def _call(self, email, live, recorded):
-        from claude_switcher.app import ClaudeSwitcherApp
+        from code_agent_switcher.app import ClaudeSwitcherApp
         return ClaudeSwitcherApp._is_row_active(email, live, recorded)
 
     def test_live_account_is_marked(self):

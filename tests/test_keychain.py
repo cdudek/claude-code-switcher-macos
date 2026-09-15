@@ -2,7 +2,7 @@ import json
 import subprocess
 from unittest.mock import patch, MagicMock
 
-from claude_switcher.keychain import (
+from code_agent_switcher.keychain import (
     KEYCHAIN_TIMEOUT_SECONDS,
     read_credentials,
     write_credentials,
@@ -13,7 +13,7 @@ FAKE_CREDS = json.dumps({"accessToken": "sk-ant-oat01-xxx", "refreshToken": "sk-
 
 
 class TestReadCredentials:
-    @patch("claude_switcher.keychain.subprocess.run")
+    @patch("code_agent_switcher.keychain.subprocess.run")
     def test_read_existing_entry(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout=FAKE_CREDS)
         result = read_credentials("claude-switcher:emile@gmail.com")
@@ -25,7 +25,7 @@ class TestReadCredentials:
             timeout=KEYCHAIN_TIMEOUT_SECONDS,
         )
 
-    @patch("claude_switcher.keychain.subprocess.run")
+    @patch("code_agent_switcher.keychain.subprocess.run")
     def test_read_missing_entry_returns_none(self, mock_run):
         mock_run.return_value = MagicMock(returncode=44, stdout="", stderr="not found")
         result = read_credentials("claude-switcher:missing@test.com")
@@ -33,7 +33,7 @@ class TestReadCredentials:
 
 
 class TestWriteCredentials:
-    @patch("claude_switcher.keychain.subprocess.run")
+    @patch("code_agent_switcher.keychain.subprocess.run")
     def test_write_credentials_deletes_then_adds(self, mock_run):
         # First call: delete returns 0 (entry found), second delete: returncode!=0 (no more),
         # third call: add-generic-password returns 0
@@ -64,7 +64,7 @@ class TestWriteCredentials:
             timeout=KEYCHAIN_TIMEOUT_SECONDS,
         )
 
-    @patch("claude_switcher.keychain.subprocess.run")
+    @patch("code_agent_switcher.keychain.subprocess.run")
     def test_write_no_existing_entry(self, mock_run):
         # No existing entry to delete, then add succeeds
         mock_run.side_effect = [
@@ -74,7 +74,7 @@ class TestWriteCredentials:
         write_credentials("claude-switcher:new@test.com", "newuser", FAKE_CREDS)
         assert mock_run.call_count == 2
 
-    @patch("claude_switcher.keychain.subprocess.run")
+    @patch("code_agent_switcher.keychain.subprocess.run")
     def test_write_failure_raises(self, mock_run):
         mock_run.side_effect = [
             MagicMock(returncode=44),  # delete fails (no entry)
@@ -88,13 +88,13 @@ class TestWriteCredentials:
 
 
 class TestDeleteCredentials:
-    @patch("claude_switcher.keychain.subprocess.run")
+    @patch("code_agent_switcher.keychain.subprocess.run")
     def test_delete_existing(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
         result = delete_credentials("claude-switcher:emile@gmail.com")
         assert result is True
 
-    @patch("claude_switcher.keychain.subprocess.run")
+    @patch("code_agent_switcher.keychain.subprocess.run")
     def test_delete_missing_returns_false(self, mock_run):
         mock_run.return_value = MagicMock(returncode=44)
         result = delete_credentials("claude-switcher:missing@test.com")
@@ -102,13 +102,13 @@ class TestDeleteCredentials:
 
 
 class TestReadAccountAttribute:
-    @patch("claude_switcher.keychain.subprocess.run")
+    @patch("code_agent_switcher.keychain.subprocess.run")
     def test_read_account_attribute(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout='    "acct"<blob>="emilejouannet"\n',
             stderr='',
         )
-        from claude_switcher.keychain import read_account_attribute
+        from code_agent_switcher.keychain import read_account_attribute
         result = read_account_attribute("Claude Code-credentials")
         assert result == "emilejouannet"

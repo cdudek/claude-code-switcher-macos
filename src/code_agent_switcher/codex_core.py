@@ -20,8 +20,8 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised only on Python 3.10
     import tomli as tomllib
 
-from claude_switcher import keychain
-from claude_switcher.config import (
+from code_agent_switcher import keychain
+from code_agent_switcher.config import (
     AccountInfo,
     add_account,
     get_active_account,

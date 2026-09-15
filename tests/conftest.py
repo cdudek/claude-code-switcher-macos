@@ -12,7 +12,7 @@ def no_network_refresh(request, monkeypatch):
     """
     if request.node.get_closest_marker("real_refresh"):
         return
-    import claude_switcher.core as core
+    import code_agent_switcher.core as core
     monkeypatch.setattr(core, "refresh_claude_credentials", lambda creds: None)
 
 

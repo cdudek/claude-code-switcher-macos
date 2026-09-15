@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from claude_switcher.ledger import (
+from code_agent_switcher.ledger import (
     HAIKU_CLASS,
     OPUS_CLASS,
     SONNET_CLASS,
@@ -209,30 +209,30 @@ class TestReportRenders:
     a model name that carries HTML."""
 
     def test_renders_with_no_records(self):
-        from claude_switcher.report import render
+        from code_agent_switcher.report import render
         page = render([])
         assert "<!doctype html>" in page
         assert "No records in this range." in page
 
     def test_shows_the_window_count(self):
-        from claude_switcher.report import render
+        from code_agent_switcher.report import render
         page = render([_rec(0), _rec(400)])
         assert "<div class=k>Windows</div><div class=v>2" in page
 
     def test_escapes_a_model_name(self):
-        from claude_switcher.report import render
+        from code_agent_switcher.report import render
         page = render([_rec(model="<script>x</script>")])
         assert "<script>x</script>" not in page
         assert "&lt;script&gt;" in page
 
     def test_names_an_unpriced_model_instead_of_hiding_it(self):
-        from claude_switcher.report import render
+        from code_agent_switcher.report import render
         page = render([_rec(model="gpt-5.6-sol", provider="codex", out=5)])
         assert "gpt-5.6-sol" in page
         assert "no rate" in page
 
     def test_writes_where_it_says_it_wrote(self, tmp_path):
-        from claude_switcher.report import write_report
+        from code_agent_switcher.report import write_report
         out = write_report([_rec(0)], tmp_path / "deep" / "usage.html")
         assert out.is_file()
         assert out.read_text().startswith("<!doctype html>")

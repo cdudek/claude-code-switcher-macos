@@ -7,7 +7,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from claude_switcher.core import (
+from code_agent_switcher.core import (
     check_claude_cli,
     get_auth_status,
     run_auth_logout,
@@ -20,28 +20,28 @@ from claude_switcher.core import (
     add_new_account,
     remove_saved_account,
 )
-from claude_switcher.config import AccountInfo
+from code_agent_switcher.config import AccountInfo
 
 
 class TestClaudeCLI:
-    @patch("claude_switcher.core.shutil.which")
+    @patch("code_agent_switcher.core.shutil.which")
     def test_check_cli_found(self, mock_which):
         mock_which.return_value = "/usr/local/bin/claude"
         assert check_claude_cli() is True
 
-    @patch("claude_switcher.core.Path.is_file", return_value=False)
-    @patch("claude_switcher.core.shutil.which", return_value=None)
+    @patch("code_agent_switcher.core.Path.is_file", return_value=False)
+    @patch("code_agent_switcher.core.shutil.which", return_value=None)
     def test_check_cli_not_found(self, mock_which, mock_is_file):
         assert check_claude_cli() is False
 
-    @patch("claude_switcher.core.subprocess.run")
+    @patch("code_agent_switcher.core.subprocess.run")
     def test_get_auth_status(self, mock_run):
         status = {"loggedIn": True, "email": "test@test.com", "subscriptionType": "pro", "orgName": "Org"}
         mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(status))
         result = get_auth_status()
         assert result["email"] == "test@test.com"
 
-    @patch("claude_switcher.core.subprocess.run")
+    @patch("code_agent_switcher.core.subprocess.run")
     def test_get_auth_status_failure_returns_none(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stdout="")
         result = get_auth_status()
@@ -49,9 +49,9 @@ class TestClaudeCLI:
 
 
 class TestImportCurrentAccount:
-    @patch("claude_switcher.core._read_oauth_account")
-    @patch("claude_switcher.core.get_auth_status")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._read_oauth_account")
+    @patch("code_agent_switcher.core.get_auth_status")
+    @patch("code_agent_switcher.core.keychain")
     def test_import_success(self, mock_kc, mock_status, mock_oauth, tmp_path):
         mock_status.return_value = {"email": "test@test.com", "subscriptionType": "pro", "orgName": "Org"}
         mock_kc.read_credentials.return_value = '{"accessToken":"tok","refreshToken":"ref"}'
@@ -68,8 +68,8 @@ class TestImportCurrentAccount:
             "claude-switcher:test@test.com", "testuser", '{"accessToken":"tok","refreshToken":"ref"}'
         )
 
-    @patch("claude_switcher.core.get_auth_status")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core.get_auth_status")
+    @patch("code_agent_switcher.core.keychain")
     def test_import_no_credentials(self, mock_kc, mock_status, tmp_path):
         mock_kc.read_credentials.return_value = None
         result = import_current_account(tmp_path / "accounts.json")
@@ -77,12 +77,12 @@ class TestImportCurrentAccount:
 
 
 class TestSwitchAccount:
-    @patch("claude_switcher.core._write_oauth_account")
-    @patch("claude_switcher.core._read_oauth_account")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._write_oauth_account")
+    @patch("code_agent_switcher.core._read_oauth_account")
+    @patch("code_agent_switcher.core.keychain")
     def test_switch_saves_current_then_loads_target(self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account, AccountInfo
+        from code_agent_switcher.config import add_account, AccountInfo
         add_account(AccountInfo("a@test.com", "pro", "Org A", True, "usera"), config_path)
         add_account(AccountInfo("b@test.com", "pro", "Org B", False, "userb",
                                 oauth_account={"emailAddress": "b@test.com"}), config_path)
@@ -103,12 +103,12 @@ class TestSwitchAccount:
         )
         mock_write_oauth.assert_called_once_with({"emailAddress": "b@test.com"})
 
-    @patch("claude_switcher.core._write_oauth_account")
-    @patch("claude_switcher.core._read_oauth_account")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._write_oauth_account")
+    @patch("code_agent_switcher.core._read_oauth_account")
+    @patch("code_agent_switcher.core.keychain")
     def test_switch_missing_keychain_entry_raises(self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account, AccountInfo
+        from code_agent_switcher.config import add_account, AccountInfo
         add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
         add_account(AccountInfo("b@test.com", "pro", "Org", False, "u"), config_path)
         mock_kc.read_credentials.side_effect = ['{"tok":"a"}', None]
@@ -122,14 +122,14 @@ class TestSwitchAccount:
 
 
 class TestAddNewAccount:
-    @patch("claude_switcher.core._read_oauth_account")
-    @patch("claude_switcher.core.get_auth_status")
-    @patch("claude_switcher.core.run_auth_login")
-    @patch("claude_switcher.core.run_auth_logout")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._read_oauth_account")
+    @patch("code_agent_switcher.core.get_auth_status")
+    @patch("code_agent_switcher.core.run_auth_login")
+    @patch("code_agent_switcher.core.run_auth_logout")
+    @patch("code_agent_switcher.core.keychain")
     def test_add_account_full_flow(self, mock_kc, mock_logout, mock_login, mock_status, mock_oauth, tmp_path):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account, AccountInfo
+        from code_agent_switcher.config import add_account, AccountInfo
         add_account(AccountInfo("a@test.com", "pro", "Org A", True, "usera"), config_path)
 
         mock_kc.read_credentials.side_effect = [
@@ -147,9 +147,9 @@ class TestAddNewAccount:
         assert result.email == "new@test.com"
         mock_login.assert_called_once()
 
-    @patch("claude_switcher.core.run_auth_login")
-    @patch("claude_switcher.core.run_auth_logout")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core.run_auth_login")
+    @patch("code_agent_switcher.core.run_auth_logout")
+    @patch("code_agent_switcher.core.keychain")
     def test_add_account_login_cancelled(self, mock_kc, mock_logout, mock_login, tmp_path):
         config_path = tmp_path / "accounts.json"
         mock_kc.read_credentials.return_value = None
@@ -161,28 +161,28 @@ class TestAddNewAccount:
 
 
 class TestRemoveSavedAccount:
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core.keychain")
     def test_remove_account(self, mock_kc, tmp_path):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account, AccountInfo
+        from code_agent_switcher.config import add_account, AccountInfo
         add_account(AccountInfo("a@test.com", "pro", "Org", False, "u"), config_path)
 
         remove_saved_account("a@test.com", config_path)
 
         mock_kc.delete_credentials.assert_called_once_with("claude-switcher:a@test.com")
-        from claude_switcher.config import load_accounts
+        from code_agent_switcher.config import load_accounts
         assert len(load_accounts(config_path)) == 0
 
 
 class TestCoreWithMixedProviders:
-    @patch("claude_switcher.core._write_oauth_account")
-    @patch("claude_switcher.core._read_oauth_account")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._write_oauth_account")
+    @patch("code_agent_switcher.core._read_oauth_account")
+    @patch("code_agent_switcher.core.keychain")
     def test_switch_claude_ignores_codex_account_with_same_email(
         self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path
     ):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account, load_accounts
+        from code_agent_switcher.config import add_account, load_accounts
 
         add_account(
             AccountInfo("user@test.com", "pro", "", True, "claude-user", provider="claude"),
@@ -248,9 +248,9 @@ class TestHasValidTokens:
 
 
 class TestImportRejectsTokenlessBlob:
-    @patch("claude_switcher.core.time.sleep")
-    @patch("claude_switcher.core.get_auth_status")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core.time.sleep")
+    @patch("code_agent_switcher.core.get_auth_status")
+    @patch("code_agent_switcher.core.keychain")
     def test_husk_is_never_snapshotted(self, mock_kc, mock_status, mock_sleep, tmp_path):
         husk = '{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}'
         mock_kc.read_credentials.return_value = husk
@@ -258,10 +258,10 @@ class TestImportRejectsTokenlessBlob:
         assert import_current_account(tmp_path / "accounts.json") is None
         mock_kc.write_credentials.assert_not_called()
 
-    @patch("claude_switcher.core.time.sleep")
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.get_auth_status")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core.time.sleep")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.get_auth_status")
+    @patch("code_agent_switcher.core.keychain")
     def test_retries_until_tokens_land(self, mock_kc, mock_status, mock_oauth, mock_sleep, tmp_path):
         husk = '{"claudeAiOauth":{"accessToken":"","refreshToken":""}}'
         good = '{"claudeAiOauth":{"accessToken":"a","refreshToken":"r"}}'
@@ -276,12 +276,12 @@ class TestImportRejectsTokenlessBlob:
 
 
 class TestSwitchGuards:
-    @patch("claude_switcher.core._write_oauth_account")
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._write_oauth_account")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.keychain")
     def test_tokenless_target_raises(self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account
+        from code_agent_switcher.config import add_account
         add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
         add_account(AccountInfo("b@test.com", "pro", "Org", False, "u"), config_path)
         mock_kc.read_credentials.side_effect = [
@@ -299,12 +299,12 @@ class TestSwitchGuards:
             '{"claudeAiOauth":{"accessToken":"a","refreshToken":"r"}}',
         )
 
-    @patch("claude_switcher.core._write_oauth_account")
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._write_oauth_account")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.keychain")
     def test_husk_does_not_clobber_current_snapshot(self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account
+        from code_agent_switcher.config import add_account
         add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
         add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
         mock_kc.read_credentials.side_effect = [
@@ -319,12 +319,12 @@ class TestSwitchGuards:
 
 
 class TestMcpOAuthCarriedOver:
-    @patch("claude_switcher.core._write_oauth_account")
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._write_oauth_account")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.keychain")
     def test_mcp_tokens_survive_a_switch(self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account
+        from code_agent_switcher.config import add_account
         add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
         add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
 
@@ -345,12 +345,12 @@ class TestMcpOAuthCarriedOver:
         assert blob["claudeAiOauth"]["accessToken"] == "b"
         assert blob["mcpOAuth"] == {"vercel": {"accessToken": "v"}, "notion": {"accessToken": "n"}}
 
-    @patch("claude_switcher.core._write_oauth_account")
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._write_oauth_account")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.keychain")
     def test_target_mcp_tokens_win(self, mock_kc, mock_read_oauth, mock_write_oauth, tmp_path):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account
+        from code_agent_switcher.config import add_account
         add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
         add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
 
@@ -376,17 +376,17 @@ class TestMcpOAuthCarriedOver:
 
 
 class TestAddAccountPreservesMcpOAuth:
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.get_auth_status")
-    @patch("claude_switcher.core.run_auth_login", return_value=True)
-    @patch("claude_switcher.core.run_auth_logout")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.get_auth_status")
+    @patch("code_agent_switcher.core.run_auth_login", return_value=True)
+    @patch("code_agent_switcher.core.run_auth_logout")
+    @patch("code_agent_switcher.core.keychain")
     def test_mcp_tokens_survive_add_account(
         self, mock_kc, mock_logout, mock_login, mock_status, mock_oauth, tmp_path
     ):
         """`claude auth logout` wipes the whole blob, MCP server tokens included."""
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account
+        from code_agent_switcher.config import add_account
         add_account(AccountInfo("a@test.com", "pro", "Org A", True, "usera"), config_path)
 
         before = json.dumps({
@@ -411,11 +411,11 @@ class TestAddAccountPreservesMcpOAuth:
         assert blob["claudeAiOauth"]["accessToken"] == "new"
         assert blob["mcpOAuth"] == {"vercel": {"accessToken": "v"}, "notion": {"accessToken": "n"}}
 
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.get_auth_status")
-    @patch("claude_switcher.core.run_auth_login", return_value=True)
-    @patch("claude_switcher.core.run_auth_logout")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.get_auth_status")
+    @patch("code_agent_switcher.core.run_auth_login", return_value=True)
+    @patch("code_agent_switcher.core.run_auth_logout")
+    @patch("code_agent_switcher.core.keychain")
     def test_no_mcp_tokens_to_preserve_is_a_noop(
         self, mock_kc, mock_logout, mock_login, mock_status, mock_oauth, tmp_path
     ):
@@ -447,7 +447,7 @@ class TestRefreshClaudeCredentials:
         resp.__exit__ = lambda s, *a: False
         return resp
 
-    @patch("claude_switcher.core.urlopen")
+    @patch("code_agent_switcher.core.urlopen")
     def test_rotated_pair_is_written_into_the_blob(self, mock_open):
         mock_open.return_value = self._response(
             {"access_token": "new", "refresh_token": "r-new", "expires_in": 28800}
@@ -460,13 +460,13 @@ class TestRefreshClaudeCredentials:
         assert o["claudeAiOauth"]["subscriptionType"] == "max"
         assert o["mcpOAuth"] == {"vercel": {"accessToken": "v"}}
 
-    @patch("claude_switcher.core.urlopen")
+    @patch("code_agent_switcher.core.urlopen")
     def test_server_keeping_the_refresh_token_leaves_it_alone(self, mock_open):
         mock_open.return_value = self._response({"access_token": "new", "expires_in": 100})
         o = json.loads(refresh_claude_credentials(self._blob()))
         assert o["claudeAiOauth"]["refreshToken"] == "r-old"
 
-    @patch("claude_switcher.core.urlopen")
+    @patch("code_agent_switcher.core.urlopen")
     def test_revoked_refresh_token_raises(self, mock_open):
         mock_open.side_effect = HTTPError(
             "u", 400, "Bad Request", {},
@@ -476,12 +476,12 @@ class TestRefreshClaudeCredentials:
         with pytest.raises(ClaudeCredentialsExpiredError):
             refresh_claude_credentials(self._blob())
 
-    @patch("claude_switcher.core.urlopen")
+    @patch("code_agent_switcher.core.urlopen")
     def test_server_error_is_transient_not_fatal(self, mock_open):
         mock_open.side_effect = HTTPError("u", 500, "Server Error", {}, io.BytesIO(b"boom"))
         assert refresh_claude_credentials(self._blob()) is None
 
-    @patch("claude_switcher.core.urlopen")
+    @patch("code_agent_switcher.core.urlopen")
     def test_offline_is_transient_not_fatal(self, mock_open):
         mock_open.side_effect = URLError("offline")
         assert refresh_claude_credentials(self._blob()) is None
@@ -492,15 +492,15 @@ class TestRefreshClaudeCredentials:
 
 @pytest.mark.real_refresh
 class TestSwitchRefreshesTheSnapshot:
-    @patch("claude_switcher.core._write_oauth_account")
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.refresh_claude_credentials")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._write_oauth_account")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.refresh_claude_credentials")
+    @patch("code_agent_switcher.core.keychain")
     def test_refreshed_pair_lands_in_snapshot_and_live(
         self, mock_kc, mock_refresh, mock_read_oauth, mock_write_oauth, tmp_path
     ):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account
+        from code_agent_switcher.config import add_account
         add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
         add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
 
@@ -523,16 +523,16 @@ class TestSwitchRefreshesTheSnapshot:
         assert blob["claudeAiOauth"]["accessToken"] == "new"
         assert blob["mcpOAuth"] == {"vercel": {"accessToken": "v"}}
 
-    @patch("claude_switcher.core._write_oauth_account")
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.refresh_claude_credentials")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._write_oauth_account")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.refresh_claude_credentials")
+    @patch("code_agent_switcher.core.keychain")
     def test_revoked_snapshot_aborts_the_switch(
         self, mock_kc, mock_refresh, mock_read_oauth, mock_write_oauth, tmp_path
     ):
         """A dead snapshot must not be written live — that is the Login expired loop."""
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account
+        from code_agent_switcher.config import add_account
         add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
         add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
 
@@ -547,15 +547,15 @@ class TestSwitchRefreshesTheSnapshot:
         for call in mock_kc.write_credentials.call_args_list:
             assert call.args[0] != "Claude Code-credentials"
 
-    @patch("claude_switcher.core._write_oauth_account")
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.refresh_claude_credentials", return_value=None)
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._write_oauth_account")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.refresh_claude_credentials", return_value=None)
+    @patch("code_agent_switcher.core.keychain")
     def test_offline_falls_back_to_stored_tokens(
         self, mock_kc, mock_refresh, mock_read_oauth, mock_write_oauth, tmp_path
     ):
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account
+        from code_agent_switcher.config import add_account
         add_account(AccountInfo("a@test.com", "pro", "Org", True, "u"), config_path)
         add_account(AccountInfo("b@test.com", "pro", "Org", False, "ub"), config_path)
 
@@ -571,11 +571,11 @@ class TestSwitchRefreshesTheSnapshot:
 
 
 class TestAddAccountDoesNotRevokeThePreviousOne:
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.get_auth_status")
-    @patch("claude_switcher.core.run_auth_login", return_value=True)
-    @patch("claude_switcher.core.run_auth_logout")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.get_auth_status")
+    @patch("code_agent_switcher.core.run_auth_login", return_value=True)
+    @patch("code_agent_switcher.core.run_auth_logout")
+    @patch("code_agent_switcher.core.keychain")
     def test_logout_is_never_run(
         self, mock_kc, mock_logout, mock_login, mock_status, mock_oauth, tmp_path
     ):
@@ -586,7 +586,7 @@ class TestAddAccountDoesNotRevokeThePreviousOne:
         account's saved session. Clearing the Keychain entry is all the login needs.
         """
         config_path = tmp_path / "accounts.json"
-        from claude_switcher.config import add_account
+        from code_agent_switcher.config import add_account
         add_account(AccountInfo("a@test.com", "pro", "Org A", True, "usera"), config_path)
 
         good = '{"claudeAiOauth":{"accessToken":"a","refreshToken":"ra"}}'
@@ -598,11 +598,11 @@ class TestAddAccountDoesNotRevokeThePreviousOne:
         assert add_new_account(config_path) is not None
         mock_logout.assert_not_called()
 
-    @patch("claude_switcher.core._read_oauth_account", return_value=None)
-    @patch("claude_switcher.core.get_auth_status")
-    @patch("claude_switcher.core.run_auth_login", return_value=True)
-    @patch("claude_switcher.core.run_auth_logout")
-    @patch("claude_switcher.core.keychain")
+    @patch("code_agent_switcher.core._read_oauth_account", return_value=None)
+    @patch("code_agent_switcher.core.get_auth_status")
+    @patch("code_agent_switcher.core.run_auth_login", return_value=True)
+    @patch("code_agent_switcher.core.run_auth_logout")
+    @patch("code_agent_switcher.core.keychain")
     def test_keychain_entry_is_still_cleared_before_login(
         self, mock_kc, mock_logout, mock_login, mock_status, mock_oauth, tmp_path
     ):

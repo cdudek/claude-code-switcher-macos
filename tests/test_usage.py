@@ -4,7 +4,7 @@ import json
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone, timedelta
 
-from claude_switcher.usage import (
+from code_agent_switcher.usage import (
     _extract_token,
     _format_reset_delta,
     format_usage,
@@ -55,7 +55,7 @@ class TestFormatResetDelta:
 
 
 class TestFormatUsage:
-    @patch("claude_switcher.usage.datetime")
+    @patch("code_agent_switcher.usage.datetime")
     def test_formats_both_periods(self, mock_dt):
         now = datetime(2026, 3, 19, 10, 0, 0, tzinfo=timezone.utc)
         mock_dt.now.return_value = now
@@ -95,8 +95,8 @@ class TestFormatUsage:
 
 
 class TestFetchUsageForAccount:
-    @patch("claude_switcher.usage.urllib.request.urlopen")
-    @patch("claude_switcher.usage.keychain.read_credentials")
+    @patch("code_agent_switcher.usage.urllib.request.urlopen")
+    @patch("code_agent_switcher.usage.keychain.read_credentials")
     def test_fetches_and_parses(self, mock_read, mock_urlopen):
         mock_read.return_value = json.dumps({"claudeAiOauth": {"accessToken": "tok"}})
         response_data = json.dumps({
@@ -112,7 +112,7 @@ class TestFetchUsageForAccount:
         result = fetch_usage_for_account("test@test.com")
         assert result["five_hour"]["utilization"] == 50.0
 
-    @patch("claude_switcher.usage.keychain.read_credentials")
+    @patch("code_agent_switcher.usage.keychain.read_credentials")
     def test_returns_none_when_no_creds(self, mock_read):
         mock_read.return_value = None
         assert fetch_usage_for_account("test@test.com") is None
@@ -126,15 +126,15 @@ def _blob(token="tok", expires_in_hours=8.0, refresh="ref"):
 
 class TestIsExpired:
     def test_future_expiry_is_live(self):
-        from claude_switcher.usage import _is_expired
+        from code_agent_switcher.usage import _is_expired
         assert _is_expired(_blob(expires_in_hours=1)) is False
 
     def test_past_expiry_is_expired(self):
-        from claude_switcher.usage import _is_expired
+        from code_agent_switcher.usage import _is_expired
         assert _is_expired(_blob(expires_in_hours=-1)) is True
 
     def test_missing_expiry_is_not_expired(self):
-        from claude_switcher.usage import _is_expired
+        from code_agent_switcher.usage import _is_expired
         assert _is_expired(json.dumps({"claudeAiOauth": {"accessToken": "t"}})) is False
 
 
@@ -154,8 +154,8 @@ class TestFetchUsageRefresh:
         return calls, _request, _write
 
     def test_401_refreshes_and_retries(self, monkeypatch):
-        import claude_switcher.usage as usage
-        import claude_switcher.core as core
+        import code_agent_switcher.usage as usage
+        import code_agent_switcher.core as core
         stored = _blob(token="OLD")
         new = _blob(token="NEW")
         calls, _request, _write = self._patches(stored, [(401, None), (200, {"five_hour": {}})])
@@ -172,8 +172,8 @@ class TestFetchUsageRefresh:
 
     def test_network_failure_does_not_rotate_the_token(self, monkeypatch):
         """A blip must not burn a refresh token that still works."""
-        import claude_switcher.usage as usage
-        import claude_switcher.core as core
+        import code_agent_switcher.usage as usage
+        import code_agent_switcher.core as core
         stored = _blob(token="OLD")
         calls, _request, _write = self._patches(stored, [(0, None)])
         refreshed = []
@@ -188,8 +188,8 @@ class TestFetchUsageRefresh:
         assert calls["written"] == []
 
     def test_expired_blob_refreshes_before_asking(self, monkeypatch):
-        import claude_switcher.usage as usage
-        import claude_switcher.core as core
+        import code_agent_switcher.usage as usage
+        import code_agent_switcher.core as core
         stored = _blob(token="OLD", expires_in_hours=-1)
         new = _blob(token="NEW")
         calls, _request, _write = self._patches(stored, [(200, {"seven_day": {}})])
@@ -205,8 +205,8 @@ class TestFetchUsageRefresh:
 
     def test_rotating_the_live_pair_moves_the_live_entry_too(self, monkeypatch):
         """Refreshing a snapshot that IS the running session must not revoke it."""
-        import claude_switcher.usage as usage
-        import claude_switcher.core as core
+        import code_agent_switcher.usage as usage
+        import code_agent_switcher.core as core
         stored = _blob(token="OLD", expires_in_hours=-1)
         new = _blob(token="NEW")
         calls, _request, _write = self._patches(stored, [(200, {"five_hour": {}})])
@@ -223,8 +223,8 @@ class TestFetchUsageRefresh:
         ]
 
     def test_unrelated_snapshot_leaves_the_live_entry_alone(self, monkeypatch):
-        import claude_switcher.usage as usage
-        import claude_switcher.core as core
+        import code_agent_switcher.usage as usage
+        import code_agent_switcher.core as core
         stored = _blob(token="OLD", expires_in_hours=-1)
         live = _blob(token="SOMEONE_ELSE")
         new = _blob(token="NEW")
@@ -273,7 +273,7 @@ class TestNullResetTime:
 
 class TestCodexNullResetTime:
     def test_a_null_reset_still_reports_the_percentage(self):
-        from claude_switcher.codex_usage import codex_usage_state
+        from code_agent_switcher.codex_usage import codex_usage_state
         state = codex_usage_state({"rate_limit": {
             "primary_window": {"used_percent": 3.0, "reset_at": None},
             "secondary_window": {"used_percent": 9.0, "reset_at": None},

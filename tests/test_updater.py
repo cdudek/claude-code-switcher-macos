@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from claude_switcher.updater import (
+from code_agent_switcher.updater import (
     REPO,
     _asset_url,
     check_for_update,
@@ -133,14 +133,14 @@ class TestDownloadValidation:
         resp.__exit__ = lambda s, *a: False
         return resp
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_unpacks_a_good_archive(self, mock_open, tmp_path):
         mock_open.return_value = self._serve(_good_app())
         app = download_update(GOOD_URL, tmp_path)
         assert app.name == "Code Agent Switcher.app"
         assert (app / "Contents" / "Info.plist").is_file()
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_rejects_a_zip_that_escapes_its_directory(self, mock_open, tmp_path):
         """Zip slip: an entry naming ../ would overwrite files outside the staging dir."""
         mock_open.return_value = self._serve(_zip({
@@ -151,13 +151,13 @@ class TestDownloadValidation:
             download_update(GOOD_URL, tmp_path)
         assert not (tmp_path.parent / "pwned").exists()
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_rejects_an_archive_with_no_app(self, mock_open, tmp_path):
         mock_open.return_value = self._serve(_zip({"readme.txt": b"hi"}))
         with pytest.raises(ValueError, match="exactly one"):
             download_update(GOOD_URL, tmp_path)
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_rejects_an_archive_with_two_apps(self, mock_open, tmp_path):
         mock_open.return_value = self._serve(_zip({
             "A.app/Contents/Info.plist": _plist(),
@@ -166,20 +166,20 @@ class TestDownloadValidation:
         with pytest.raises(ValueError, match="exactly one"):
             download_update(GOOD_URL, tmp_path)
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_rejects_an_app_without_an_info_plist(self, mock_open, tmp_path):
         mock_open.return_value = self._serve(_zip({"Code Agent Switcher.app/Contents/MacOS/x": b"b"}))
         with pytest.raises(ValueError, match="Info.plist"):
             download_update(GOOD_URL, tmp_path)
 
-    @patch("claude_switcher.updater.MAX_DOWNLOAD_BYTES", 128)
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.MAX_DOWNLOAD_BYTES", 128)
+    @patch("code_agent_switcher.updater.urlopen")
     def test_stops_an_oversized_download(self, mock_open, tmp_path):
         mock_open.return_value = self._serve(b"x" * 5000)
         with pytest.raises(ValueError, match="implausibly large"):
             download_update(GOOD_URL, tmp_path)
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_ignores_the_macosx_metadata_folder(self, mock_open, tmp_path):
         """macOS' own zip writes __MACOSX/ alongside the real bundle."""
         mock_open.return_value = self._serve(_good_app(entries={
@@ -196,8 +196,8 @@ class TestCheckForUpdate:
         resp.__exit__ = lambda s, *a: False
         return resp
 
-    @patch("claude_switcher.updater.current_version", return_value="0.4.3")
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.current_version", return_value="0.4.3")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_finds_a_newer_release(self, mock_open, _v):
         mock_open.return_value = self._api({
             "tag_name": "v9.9.9", "body": "notes",
@@ -205,15 +205,15 @@ class TestCheckForUpdate:
         })
         assert check_for_update() == ("v9.9.9", GOOD_URL, "notes")
 
-    @patch("claude_switcher.updater.current_version", return_value="9.9.9")
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.current_version", return_value="9.9.9")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_same_version_is_no_update(self, mock_open, _v):
         mock_open.return_value = self._api({
             "tag_name": "v9.9.9", "assets": [{"browser_download_url": GOOD_URL}]})
         assert check_for_update() is None
 
-    @patch("claude_switcher.updater.current_version", return_value="0.4.3")
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.current_version", return_value="0.4.3")
+    @patch("code_agent_switcher.updater.urlopen")
     @pytest.mark.parametrize("flag", ["draft", "prerelease"])
     def test_drafts_and_prereleases_are_skipped(self, mock_open, _v, flag):
         mock_open.return_value = self._api({
@@ -221,20 +221,20 @@ class TestCheckForUpdate:
             "assets": [{"browser_download_url": GOOD_URL}]})
         assert check_for_update() is None
 
-    @patch("claude_switcher.updater.current_version", return_value="0.4.3")
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.current_version", return_value="0.4.3")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_a_release_pointing_off_github_is_ignored(self, mock_open, _v):
         mock_open.return_value = self._api({
             "tag_name": "v9.9.9",
             "assets": [{"browser_download_url": "https://evil.example.com/a.zip"}]})
         assert check_for_update() is None
 
-    @patch("claude_switcher.updater.urlopen", side_effect=OSError("offline"))
+    @patch("code_agent_switcher.updater.urlopen", side_effect=OSError("offline"))
     def test_being_offline_is_silent(self, _):
         """A failed check must never interrupt anyone."""
         assert check_for_update() is None
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_garbage_json_is_silent(self, mock_open):
         resp = MagicMock()
         resp.read.return_value = b"not json"
@@ -259,7 +259,7 @@ class TestSwapScript:
         return app
 
     def _run(self, staged, target, backup, log, tmp):
-        from claude_switcher.updater import swap_script
+        from code_agent_switcher.updater import swap_script
         import subprocess as sp
         script = tmp / "swap.sh"
         # pid 1 is always alive, so use this process's pid: it has already
@@ -277,7 +277,7 @@ class TestSwapScript:
     def test_replaces_the_installed_app(self, tmp_path):
         staged = self._bundle(tmp_path / "stage", "Code Agent Switcher.app", "0.5.0")
         target = self._bundle(tmp_path / "apps", "Code Agent Switcher.app", "0.4.3")
-        from claude_switcher.updater import backup_path
+        from code_agent_switcher.updater import backup_path
         backup = backup_path(target)
         log = tmp_path / "swap.log"
 
@@ -296,7 +296,7 @@ class TestSwapScript:
         target.parent.mkdir()
         log = tmp_path / "swap.log"
 
-        self._run(staged, target, __import__("claude_switcher.updater", fromlist=["x"]).backup_path(target), log, tmp_path)
+        self._run(staged, target, __import__("code_agent_switcher.updater", fromlist=["x"]).backup_path(target), log, tmp_path)
 
         assert target.is_dir(), f"nothing installed. log:\n{log.read_text() if log.exists() else '(none)'}"
         assert "0.5.0" in (target / "Contents" / "Info.plist").read_text()
@@ -305,7 +305,7 @@ class TestSwapScript:
         """A staged app that has vanished must not cost the user the working one."""
         staged = tmp_path / "stage" / "Code Agent Switcher.app"   # never created
         target = self._bundle(tmp_path / "apps", "Code Agent Switcher.app", "0.4.3")
-        from claude_switcher.updater import backup_path
+        from code_agent_switcher.updater import backup_path
         backup = backup_path(target)
         log = tmp_path / "swap.log"
 
@@ -318,7 +318,7 @@ class TestSwapScript:
         staged = self._bundle(tmp_path / "stage", "Code Agent Switcher.app", "0.5.0")
         target = self._bundle(tmp_path / "apps", "Code Agent Switcher.app", "0.4.3")
         log = tmp_path / "swap.log"
-        self._run(staged, target, __import__("claude_switcher.updater", fromlist=["x"]).backup_path(target), log, tmp_path)
+        self._run(staged, target, __import__("code_agent_switcher.updater", fromlist=["x"]).backup_path(target), log, tmp_path)
         assert log.is_file() and "installed ok" in log.read_text()
 
 
@@ -326,18 +326,18 @@ class TestBackupPath:
     """Derived by the code under test, not recomputed by the test."""
 
     def test_is_hidden_from_finder(self):
-        from claude_switcher.updater import backup_path
+        from code_agent_switcher.updater import backup_path
         b = backup_path(Path("/Applications/Code Agent Switcher.app"))
         assert b.name.startswith("."), f"{b.name} would be visible in /Applications"
 
     def test_sits_beside_the_target(self):
         """Restoring must be a rename on one filesystem, not a copy across two."""
-        from claude_switcher.updater import backup_path
+        from code_agent_switcher.updater import backup_path
         t = Path("/Applications/Code Agent Switcher.app")
         assert backup_path(t).parent == t.parent
 
     def test_names_the_app_it_backs_up(self):
-        from claude_switcher.updater import backup_path
+        from code_agent_switcher.updater import backup_path
         assert backup_path(Path("/x/Foo.app")).name == ".Foo.app.previous"
 
 
@@ -353,20 +353,20 @@ class TestUnpackedBundleMustBeLaunchable:
         resp.__exit__ = lambda s, *a: False
         return resp
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_the_executable_bit_survives_unpacking(self, mock_open, tmp_path):
         mock_open.return_value = self._serve(_good_app())
         app = download_update(GOOD_URL, tmp_path)
         exe = app / "Contents" / "MacOS" / "Code Agent Switcher"
         assert os.access(exe, os.X_OK)
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_rejects_an_app_whose_executable_is_not_executable(self, mock_open, tmp_path):
         mock_open.return_value = self._serve(_good_app(executable=()))
         with pytest.raises(ValueError, match="not executable"):
             download_update(GOOD_URL, tmp_path)
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_rejects_an_app_with_no_cfbundleexecutable(self, mock_open, tmp_path):
         payload = _zip({f"{APP}/Contents/Info.plist": _plist(None), EXE: b"bin"},
                        executable=(EXE,))
@@ -374,7 +374,7 @@ class TestUnpackedBundleMustBeLaunchable:
         with pytest.raises(ValueError, match="CFBundleExecutable"):
             download_update(GOOD_URL, tmp_path)
 
-    @patch("claude_switcher.updater.urlopen")
+    @patch("code_agent_switcher.updater.urlopen")
     def test_rejects_an_app_with_no_executable_file(self, mock_open, tmp_path):
         payload = _zip({f"{APP}/Contents/Info.plist": _plist(),
                         f"{APP}/Contents/Resources/x": b"y"})

@@ -14,7 +14,7 @@ import html
 from datetime import date, datetime
 from pathlib import Path
 
-from claude_switcher.ledger import (
+from code_agent_switcher.ledger import (
     assumed_models,
     rate_for,
     Record,

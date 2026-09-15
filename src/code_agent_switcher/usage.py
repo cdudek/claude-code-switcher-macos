@@ -5,8 +5,8 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-from claude_switcher import keychain
-from claude_switcher.usage_state import UsageState, UsageWindow
+from code_agent_switcher import keychain
+from code_agent_switcher.usage_state import UsageState, UsageWindow
 
 USAGE_URL = "https://api.anthropic.com/oauth/usage"
 USAGE_TIMEOUT_SECONDS = 10
@@ -63,7 +63,7 @@ def _refresh_stored(service: str, creds: str) -> str | None:
     """
     # Imported here: core reads config and Keychain at import time in some paths,
     # and usage is imported by the menu build.
-    from claude_switcher.core import ClaudeCredentialsExpiredError, refresh_claude_credentials
+    from code_agent_switcher.core import ClaudeCredentialsExpiredError, refresh_claude_credentials
 
     try:
         refreshed = refresh_claude_credentials(creds)

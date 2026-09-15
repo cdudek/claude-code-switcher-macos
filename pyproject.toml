@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claude-account-switcher"
+name = "code-agent-switcher"
 dynamic = ["version"]
 description = "macOS menu bar app to switch between Claude Code and Codex CLI accounts instantly"
 readme = "README.md"
@@ -28,13 +28,13 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/Symbioose/claude-account-switcher"
+Repository = "https://github.com/cdudek/code-agent-switcher"
 
 [project.scripts]
-claude-switcher = "claude_switcher.app:main"
+code-agent-switcher = "code_agent_switcher.app:main"
 
 [tool.setuptools.dynamic]
-version = {attr = "claude_switcher.__version__"}
+version = {attr = "code_agent_switcher.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

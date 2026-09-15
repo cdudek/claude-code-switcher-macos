@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import claude_switcher.codex_core as codex_core_mod
-from claude_switcher.codex_core import (
+import code_agent_switcher.codex_core as codex_core_mod
+from code_agent_switcher.codex_core import (
     CodexCredentialsExpiredError,
     CODEX_KEYRING_UNSUPPORTED_MESSAGE,
     add_new_codex_account,
@@ -22,7 +22,7 @@ from claude_switcher.codex_core import (
     switch_codex_account,
     remove_codex_account,
 )
-from claude_switcher.config import AccountInfo, load_accounts, save_accounts
+from code_agent_switcher.config import AccountInfo, load_accounts, save_accounts
 
 
 def _jwt(payload):
@@ -49,23 +49,23 @@ def _auth_json(email="user@test.com", plan="plus"):
 
 
 class TestCodexCLI:
-    @patch("claude_switcher.codex_core.shutil.which", return_value="/usr/local/bin/codex")
+    @patch("code_agent_switcher.codex_core.shutil.which", return_value="/usr/local/bin/codex")
     def test_check_cli_found(self, mock_which):
         assert check_codex_cli() is True
 
-    @patch("claude_switcher.codex_core.Path.is_file", return_value=False)
-    @patch("claude_switcher.codex_core.shutil.which", return_value=None)
+    @patch("code_agent_switcher.codex_core.Path.is_file", return_value=False)
+    @patch("code_agent_switcher.codex_core.shutil.which", return_value=None)
     def test_check_cli_not_found_in_path(self, mock_which, mock_is_file):
         assert check_codex_cli() is False
 
-    @patch("claude_switcher.codex_core.subprocess.run")
+    @patch("code_agent_switcher.codex_core.subprocess.run")
     def test_get_auth_status_logged_in(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="Logged in using ChatGPT", stderr="")
         status = get_codex_auth_status()
         assert status is not None
         assert status["loggedIn"] is True
 
-    @patch("claude_switcher.codex_core.subprocess.run")
+    @patch("code_agent_switcher.codex_core.subprocess.run")
     def test_get_auth_status_not_logged_in(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
         assert get_codex_auth_status() is None
@@ -116,7 +116,7 @@ class TestCodexCredentials:
                 read_codex_credentials()
         assert "cli_auth_credentials_store" in CODEX_KEYRING_UNSUPPORTED_MESSAGE
 
-    @patch("claude_switcher.codex_core.urlopen")
+    @patch("code_agent_switcher.codex_core.urlopen")
     def test_refresh_credentials_updates_rotated_tokens(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps({
@@ -136,7 +136,7 @@ class TestCodexCredentials:
         assert data["tokens"]["refresh_token"] == "new-refresh"
         assert "last_refresh" in data
 
-    @patch("claude_switcher.codex_core.urlopen")
+    @patch("code_agent_switcher.codex_core.urlopen")
     def test_refresh_credentials_raises_for_consumed_refresh_token(self, mock_urlopen):
         error_body = json.dumps({
             "error": {"message": "Your refresh token has already been used."}
@@ -154,8 +154,8 @@ class TestCodexCredentials:
 
 
 class TestImportCodexAccount:
-    @patch("claude_switcher.codex_core.keychain")
-    @patch("claude_switcher.codex_core.get_codex_auth_status")
+    @patch("code_agent_switcher.codex_core.keychain")
+    @patch("code_agent_switcher.codex_core.get_codex_auth_status")
     def test_import_success(self, mock_status, mock_kc, tmp_path):
         auth_file = tmp_path / "auth.json"
         config_file = tmp_path / "config.toml"
@@ -191,22 +191,22 @@ class TestImportCodexAccount:
 
 
 class TestCodexLogin:
-    @patch("claude_switcher.codex_core._launch_codex_login_terminal")
-    @patch("claude_switcher.codex_core.time.sleep")
+    @patch("code_agent_switcher.codex_core._launch_codex_login_terminal")
+    @patch("code_agent_switcher.codex_core.time.sleep")
     def test_run_codex_login_waits_for_auth_file(self, mock_sleep, mock_launch):
         with patch(
-            "claude_switcher.codex_core._read_codex_credentials_from_file",
+            "code_agent_switcher.codex_core._read_codex_credentials_from_file",
             side_effect=[None, _auth_json(email="new@test.com")],
         ):
             assert run_codex_login(timeout=3) is True
         mock_launch.assert_called_once()
 
-    @patch("claude_switcher.codex_core.subprocess.run")
-    @patch("claude_switcher.codex_core._codex_cmd", return_value="/opt/homebrew/bin/codex")
+    @patch("code_agent_switcher.codex_core.subprocess.run")
+    @patch("code_agent_switcher.codex_core._codex_cmd", return_value="/opt/homebrew/bin/codex")
     def test_launch_codex_login_opens_terminal(self, mock_cmd, mock_run, tmp_path):
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("claude_switcher.codex_core.tempfile.gettempdir", return_value=str(tmp_path)):
+        with patch("code_agent_switcher.codex_core.tempfile.gettempdir", return_value=str(tmp_path)):
             codex_core_mod._launch_codex_login_terminal()
 
         script_path = tmp_path / "claude-switcher-codex-login-{}.command".format(
@@ -217,9 +217,9 @@ class TestCodexLogin:
         mock_run.assert_called_once()
         assert mock_run.call_args.args[0][0] == "open"
 
-    @patch("claude_switcher.codex_core.import_current_codex_account")
-    @patch("claude_switcher.codex_core.run_codex_login")
-    @patch("claude_switcher.codex_core.run_codex_logout")
+    @patch("code_agent_switcher.codex_core.import_current_codex_account")
+    @patch("code_agent_switcher.codex_core.run_codex_login")
+    @patch("code_agent_switcher.codex_core.run_codex_logout")
     def test_add_new_account_opens_login_when_no_current_file(
         self, mock_logout, mock_login, mock_import, tmp_path
     ):
@@ -238,10 +238,10 @@ class TestCodexLogin:
         mock_logout.assert_called_once()
         mock_login.assert_called_once()
 
-    @patch("claude_switcher.codex_core._write_codex_credentials")
-    @patch("claude_switcher.codex_core.run_codex_login")
-    @patch("claude_switcher.codex_core.run_codex_logout")
-    @patch("claude_switcher.codex_core.keychain")
+    @patch("code_agent_switcher.codex_core._write_codex_credentials")
+    @patch("code_agent_switcher.codex_core.run_codex_login")
+    @patch("code_agent_switcher.codex_core.run_codex_logout")
+    @patch("code_agent_switcher.codex_core.keychain")
     def test_add_new_account_restores_saved_creds_when_cancelled(
         self, mock_kc, mock_logout, mock_login, mock_write, tmp_path
     ):
@@ -265,8 +265,8 @@ class TestCodexLogin:
 
 
 class TestSwitchCodexAccount:
-    @patch("claude_switcher.codex_core._write_codex_credentials")
-    @patch("claude_switcher.codex_core.keychain")
+    @patch("code_agent_switcher.codex_core._write_codex_credentials")
+    @patch("code_agent_switcher.codex_core.keychain")
     def test_switch_saves_current_loads_target(self, mock_kc, mock_write, tmp_path):
         config = tmp_path / "accounts.json"
         auth_file = tmp_path / "auth.json"
@@ -291,9 +291,9 @@ class TestSwitchCodexAccount:
         active = [a for a in load_accounts(config) if a.provider == "codex" and a.active]
         assert active[0].email == "new@test.com"
 
-    @patch("claude_switcher.codex_core.refresh_codex_credentials")
-    @patch("claude_switcher.codex_core._write_codex_credentials")
-    @patch("claude_switcher.codex_core.keychain")
+    @patch("code_agent_switcher.codex_core.refresh_codex_credentials")
+    @patch("code_agent_switcher.codex_core._write_codex_credentials")
+    @patch("code_agent_switcher.codex_core.keychain")
     def test_switch_refreshes_target_before_write(self, mock_kc, mock_write, mock_refresh, tmp_path):
         config = tmp_path / "accounts.json"
         auth_file = tmp_path / "auth.json"
@@ -317,9 +317,9 @@ class TestSwitchCodexAccount:
         mock_write.assert_called_once_with(refreshed_creds)
         mock_kc.write_credentials.assert_any_call("codex-switcher:new@test.com", "new", refreshed_creds)
 
-    @patch("claude_switcher.codex_core.refresh_codex_credentials")
-    @patch("claude_switcher.codex_core._write_codex_credentials")
-    @patch("claude_switcher.codex_core.keychain")
+    @patch("code_agent_switcher.codex_core.refresh_codex_credentials")
+    @patch("code_agent_switcher.codex_core._write_codex_credentials")
+    @patch("code_agent_switcher.codex_core.keychain")
     def test_switch_refuses_expired_target_session(self, mock_kc, mock_write, mock_refresh, tmp_path):
         config = tmp_path / "accounts.json"
         auth_file = tmp_path / "auth.json"
@@ -341,7 +341,7 @@ class TestSwitchCodexAccount:
 
         mock_write.assert_not_called()
 
-    @patch("claude_switcher.codex_core.keychain")
+    @patch("code_agent_switcher.codex_core.keychain")
     def test_switch_decodes_hex_encoded_target_credentials(self, mock_kc, tmp_path):
         config = tmp_path / "accounts.json"
         auth_file = tmp_path / "auth.json"
@@ -363,7 +363,7 @@ class TestSwitchCodexAccount:
         assert json.loads(auth_file.read_text(encoding="utf-8"))["tokens"]["account_id"] == "acc-123"
         assert auth_file.read_text(encoding="utf-8") == target_creds
 
-    @patch("claude_switcher.codex_core.keychain")
+    @patch("code_agent_switcher.codex_core.keychain")
     def test_switch_missing_keychain_raises(self, mock_kc, tmp_path):
         config = tmp_path / "accounts.json"
         save_accounts([AccountInfo("new@test.com", "plus", "", False, "new", provider="codex")], config)
@@ -374,7 +374,7 @@ class TestSwitchCodexAccount:
 
 
 class TestRemoveCodexAccount:
-    @patch("claude_switcher.codex_core.keychain")
+    @patch("code_agent_switcher.codex_core.keychain")
     def test_remove_account(self, mock_kc, tmp_path):
         config = tmp_path / "accounts.json"
         save_accounts([AccountInfo("rm@test.com", "plus", "", False, "rm", provider="codex")], config)

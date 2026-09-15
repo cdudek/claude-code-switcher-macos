@@ -2,8 +2,8 @@
 
 from collections.abc import Callable
 
-from claude_switcher.config import AccountInfo
-from claude_switcher.usage_state import UsageState
+from code_agent_switcher.config import AccountInfo
+from code_agent_switcher.usage_state import UsageState
 
 AccountKey = tuple[str, str]
 

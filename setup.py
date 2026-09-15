@@ -17,13 +17,13 @@ from setuptools import setup
 # was cut from a branch, and the release workflow checks the tag against this.
 VERSION = re.search(
     r'__version__ = "([^"]+)"',
-    Path("src/claude_switcher/__init__.py").read_text(encoding="utf-8"),
+    Path("src/code_agent_switcher/__init__.py").read_text(encoding="utf-8"),
 ).group(1)
 
 # py2app conflicts with pyproject.toml's install_requires,
 # so we keep this file minimal and self-contained.
-APP = ["src/claude_switcher/app.py"]
-ICON = "src/claude_switcher/resources/AppIcon.icns"
+APP = ["src/code_agent_switcher/app.py"]
+ICON = "src/code_agent_switcher/resources/AppIcon.icns"
 
 OPTIONS = {
     "argv_emulation": False,
@@ -41,10 +41,10 @@ OPTIONS = {
         "LSMinimumSystemVersion": "12.0",
     },
     # Include our package + rumps and its dependencies
-    "packages": ["claude_switcher", "rumps"],
+    "packages": ["code_agent_switcher", "rumps"],
     "includes": ["objc", "Foundation", "AppKit"],
     "excludes": ["pytest", "_pytest", "pygments", "iniconfig", "pluggy", "setuptools.tests"],
-    "resources": ["src/claude_switcher/resources"],
+    "resources": ["src/code_agent_switcher/resources"],
 }
 
 setup(

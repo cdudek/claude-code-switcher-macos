@@ -64,4 +64,4 @@ xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null || true
 
 say "Launching"
 open "$TARGET"
-say "Done. Code Agent Switcher $(./.venv/bin/python -c 'from claude_switcher import __version__;print(__version__)') is in your menu bar."
+say "Done. Code Agent Switcher $(./.venv/bin/python -c 'from code_agent_switcher import __version__;print(__version__)') is in your menu bar."

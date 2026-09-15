@@ -175,7 +175,7 @@ uv's Python does not have, and the build dies partway through with an
 
 ## Cutting a release
 
-The version lives in **one** place, `src/claude_switcher/__init__.py`. `setup.py`
+The version lives in **one** place, `src/code_agent_switcher/__init__.py`. `setup.py`
 and `pyproject.toml` read it, and the release workflow fails if the tag disagrees.
 
 ```bash

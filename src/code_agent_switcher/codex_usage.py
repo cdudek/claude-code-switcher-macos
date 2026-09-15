@@ -5,16 +5,16 @@ from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from claude_switcher import __version__
-from claude_switcher import keychain
-from claude_switcher.codex_core import (
+from code_agent_switcher import __version__
+from code_agent_switcher import keychain
+from code_agent_switcher.codex_core import (
     CodexCredentialsExpiredError,
     backup_codex_credentials,
     normalize_codex_credentials_blob,
     refresh_codex_credentials,
     write_active_codex_credentials,
 )
-from claude_switcher.usage_state import UsageState, UsageWindow
+from code_agent_switcher.usage_state import UsageState, UsageWindow
 
 CODEX_USAGE_URLS = (
     "https://chatgpt.com/backend-api/wham/usage",
@@ -121,7 +121,7 @@ def fetch_codex_usage_for_account(email: str) -> dict | None:
 def fetch_active_codex_usage() -> dict | None:
     """Fetch usage for the currently active Codex session."""
     try:
-        from claude_switcher.codex_core import read_codex_credentials
+        from code_agent_switcher.codex_core import read_codex_credentials
 
         creds = read_codex_credentials()
     except RuntimeError:

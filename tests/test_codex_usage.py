@@ -5,7 +5,7 @@ import urllib.error
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
 
-from claude_switcher.codex_usage import (
+from code_agent_switcher.codex_usage import (
     CODEX_LOGIN_REQUIRED_USAGE,
     _extract_codex_token,
     fetch_codex_usage,
@@ -95,7 +95,7 @@ class TestFormatCodexUsage:
 
 
 class TestFetchCodexUsageForAccount:
-    @patch("claude_switcher.codex_usage.urlopen")
+    @patch("code_agent_switcher.codex_usage.urlopen")
     def test_fetch_tries_second_endpoint_after_first_fails(self, mock_urlopen):
         response_data = json.dumps({"rate_limit": {"primary_window": {"used_percent": 10}}}).encode()
         mock_resp = MagicMock()
@@ -109,8 +109,8 @@ class TestFetchCodexUsageForAccount:
         assert result["rate_limit"]["primary_window"]["used_percent"] == 10
         assert mock_urlopen.call_count == 2
 
-    @patch("claude_switcher.codex_usage.fetch_codex_usage_with_refresh")
-    @patch("claude_switcher.codex_usage.keychain")
+    @patch("code_agent_switcher.codex_usage.fetch_codex_usage_with_refresh")
+    @patch("code_agent_switcher.codex_usage.keychain")
     def test_fetches_for_account(self, mock_kc, mock_fetch):
         mock_kc.read_credentials.return_value = FAKE_CREDS_NESTED
         mock_fetch.return_value = ({"rate_limit": {}}, None)
@@ -118,14 +118,14 @@ class TestFetchCodexUsageForAccount:
         mock_kc.read_credentials.assert_called_with("codex-switcher:user@test.com")
         assert result is not None
 
-    @patch("claude_switcher.codex_usage.keychain")
+    @patch("code_agent_switcher.codex_usage.keychain")
     def test_returns_none_when_no_creds(self, mock_kc):
         mock_kc.read_credentials.return_value = None
         result = fetch_codex_usage_for_account("user@test.com")
         assert result is None
 
-    @patch("claude_switcher.codex_usage._fetch_codex_usage_once")
-    @patch("claude_switcher.codex_usage.refresh_codex_credentials")
+    @patch("code_agent_switcher.codex_usage._fetch_codex_usage_once")
+    @patch("code_agent_switcher.codex_usage.refresh_codex_credentials")
     def test_fetch_refreshes_stale_credentials(self, mock_refresh, mock_fetch_once):
         refreshed = json.dumps({
             "auth_mode": "chatgpt",
@@ -139,8 +139,8 @@ class TestFetchCodexUsageForAccount:
         assert usage == {"rate_limit": {}}
         assert refreshed_creds == refreshed
 
-    @patch("claude_switcher.codex_usage.fetch_codex_usage_with_refresh")
-    @patch("claude_switcher.codex_usage.keychain")
+    @patch("code_agent_switcher.codex_usage.fetch_codex_usage_with_refresh")
+    @patch("code_agent_switcher.codex_usage.keychain")
     def test_fetch_for_account_saves_refreshed_credentials(self, mock_kc, mock_fetch):
         mock_kc.read_credentials.return_value = FAKE_CREDS_NESTED
         mock_fetch.return_value = ({"rate_limit": {}}, '{"fresh": true}')

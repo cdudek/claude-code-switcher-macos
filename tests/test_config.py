@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from claude_switcher.config import (
+from code_agent_switcher.config import (
     AccountInfo,
     AppSettings,
     load_accounts,

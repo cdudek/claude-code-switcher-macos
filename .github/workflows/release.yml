@@ -39,9 +39,9 @@ jobs:
       - name: Check the tag matches the version in the source
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          SRC="v$(python -c 'from claude_switcher import __version__; print(__version__)')"
+          SRC="v$(python -c 'from code_agent_switcher import __version__; print(__version__)')"
           if [ "$TAG" != "$SRC" ]; then
-            echo "::error::tag $TAG does not match __version__ $SRC - bump src/claude_switcher/__init__.py"
+            echo "::error::tag $TAG does not match __version__ $SRC - bump src/code_agent_switcher/__init__.py"
             exit 1
           fi
 

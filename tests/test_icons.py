@@ -6,7 +6,7 @@ missing file is not a cosmetic bug.
 
 from pathlib import Path
 
-from claude_switcher.icons import ICON_SLUG, ICONS_DIR, icon_path
+from code_agent_switcher.icons import ICON_SLUG, ICONS_DIR, icon_path
 
 
 class TestMenuBarIcon:
