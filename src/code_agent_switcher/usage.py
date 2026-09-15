@@ -217,7 +217,8 @@ def claude_usage_state(usage: dict | None, reason: str | None = None) -> UsageSt
         reset = _format_reset_delta(window["resets_at"]) if window.get("resets_at") else None
         reset_suffix = f" ({reset})" if reset else ""
         parts.append(f"{label} {percent:.0f}%{reset_suffix}")
-        windows.append(UsageWindow(label=label, percent=percent, resets_in=reset))
+        windows.append(UsageWindow(label=label, percent=percent, resets_in=reset,
+                                   resets_at=window.get("resets_at")))
 
     if not parts:
         return UsageState(available=False, display="Usage unavailable",

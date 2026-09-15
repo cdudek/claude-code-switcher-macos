@@ -14,7 +14,7 @@ import AppKit
 import objc
 from Foundation import NSMakeRect
 
-from code_agent_switcher.ui import DotView, PillView, _label, pill_width
+from code_agent_switcher.ui import PillView, _label, pill_width
 
 WIDTH = 520.0
 ROW_HEIGHT = 44.0
@@ -56,6 +56,23 @@ class _RowActions(AppKit.NSObject):
 
     def remove_(self, _):
         self._controller.removeAccount(self._provider, self._email)
+
+
+class _SelectAction(AppKit.NSObject):
+    """The radio on a row. Selecting an account IS switching to it."""
+
+    def initWithController_email_provider_(self, controller, email, provider):
+        self = objc.super(_SelectAction, self).init()
+        if self is None:
+            return None
+        self._controller = controller
+        self._email = email
+        self._provider = provider
+        return self
+
+    def fire_(self, sender):
+        if sender.state() == AppKit.NSControlStateValueOn:
+            self._controller.switchAccount(self._provider, self._email)
 
 
 class _AddAction(AppKit.NSObject):
@@ -139,7 +156,7 @@ class AccountsWindowController:
                 AppKit.NSBackingStoreBuffered,
                 False,
             )
-            self.window.setTitle_("Manage Accounts")
+            self.window.setTitle_("Code Agent Switcher \u2013 Manage Accounts")
             self.window.setReleasedWhenClosed_(False)
         self.rebuild(accounts, live_active, version)
         self.window.center()
@@ -204,22 +221,37 @@ class AccountsWindowController:
         self.window.setContentView_(content)
 
     def _add_row(self, group, account, y, is_active) -> None:
-        if is_active:
-            dot = DotView.alloc().initWithFrame_(NSMakeRect(18, y + ROW_HEIGHT / 2 - 4, 8, 8))
-            group.addSubview_(dot)
+        # A radio, not a dot and a hidden menu: the list shows which account is
+        # in use and picking another one is the switch. The old row put that
+        # behind a "..." and left the visible control doing nothing.
+        select = _SelectAction.alloc().initWithController_email_provider_(
+            self, account.email, account.provider
+        )
+        self._keep_alive.append(select)
+        radio = AppKit.NSButton.alloc().initWithFrame_(
+            NSMakeRect(16, y + ROW_HEIGHT / 2 - 9, 300, 18)
+        )
+        radio.setButtonType_(AppKit.NSButtonTypeRadio)
+        radio.setTitle_("  " + account.email)
+        radio.setFont_(AppKit.NSFont.systemFontOfSize_(13.0))
+        radio.setState_(
+            AppKit.NSControlStateValueOn if is_active else AppKit.NSControlStateValueOff
+        )
+        radio.setTarget_(select)
+        radio.setAction_("fire:")
+        group.addSubview_(radio)
 
-        name = _label(account.email, 13.0)
-        name.sizeToFit()
-        frame = name.frame()
-        name.setFrame_(NSMakeRect(40, y + (ROW_HEIGHT - frame.size.height) / 2,
-                                  frame.size.width, frame.size.height))
-        group.addSubview_(name)
+        attrs = {AppKit.NSFontAttributeName: AppKit.NSFont.systemFontOfSize_(13.0)}
+        text_width = AppKit.NSString.stringWithString_(
+            "  " + account.email
+        ).sizeWithAttributes_(attrs).width
+        frame = AppKit.NSMakeSize(text_width + 22, 18)
 
         plan = account.subscription_type or ""
         if plan:
             width = pill_width(plan)
             pill = PillView.alloc().initWithFrame_text_(
-                NSMakeRect(48 + frame.size.width, y + ROW_HEIGHT / 2 - 8, width, 16), plan
+                NSMakeRect(24 + frame.width, y + ROW_HEIGHT / 2 - 8, width, 16), plan
             )
             group.addSubview_(pill)
 

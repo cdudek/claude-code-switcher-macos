@@ -11,6 +11,7 @@ from Foundation import NSOperationQueue
 
 from code_agent_switcher import keychain
 from code_agent_switcher.auto_switch import (
+    can_auto_switch,
     account_key,
     choose_auto_switch_target,
     should_auto_switch,
@@ -51,8 +52,9 @@ from code_agent_switcher.core import (
 )
 from code_agent_switcher.usage import fetch_usage_detail_for_account, fetch_active_usage_detail, claude_usage_state
 from code_agent_switcher.usage_state import UsageState
-from code_agent_switcher.ledger import load_records, since_days
+from code_agent_switcher.ledger import load_records, since_days, tokens_between
 from code_agent_switcher.report import write_report
+from datetime import timedelta
 from code_agent_switcher import ui, usage_log
 from code_agent_switcher.accounts_window import AccountsWindowController
 
@@ -64,6 +66,9 @@ from Foundation import NSRunLoop, NSRunLoopCommonModes, NSTimer
 # nobody is looking, and polling four accounts every five minutes for an empty
 # screen is four requests a minute nobody asked for.
 OPEN_POLL_SECONDS = 15.0
+# The budget rates change slowly; recomputing them per decision would re-read a
+# week of transcripts for nothing.
+BUDGET_RATE_TTL_SECONDS = 3600.0
 BACKGROUND_POLL_SECONDS = 300.0
 
 # A month is long enough to see a trend and short enough to read in a few
@@ -155,6 +160,8 @@ class ClaudeSwitcherApp(rumps.App):
         self._auto_switch_timer.start()
         self._update_in_progress = False
         self._report_in_progress = False
+        self._budget_rates_cache: dict = {}
+        self._budget_rates_at = 0.0
         self._update_timer = rumps.Timer(self._on_periodic_update_check, UPDATE_CHECK_INTERVAL_SECONDS)
         self._update_timer.start()
         # The first tick of a rumps.Timer fires immediately; defer the launch
@@ -436,11 +443,21 @@ class ClaudeSwitcherApp(rumps.App):
 
     def _add_auto_switch_menu(self, parent):
         settings = load_settings(self.config_path)
+        accounts = load_accounts(self.config_path)
         auto_menu = rumps.MenuItem("Auto-switch")
         for provider in ("claude", "codex"):
-            item = rumps.MenuItem(PROVIDER_LABELS[provider], callback=self._on_toggle_auto_switch)
+            possible = can_auto_switch(provider, accounts)
+            label = PROVIDER_LABELS[provider]
+            if not possible:
+                # Offering a switch with nowhere to switch to is a control that
+                # cannot do anything; say why rather than let it be ticked.
+                label += "  (needs a second account)"
+            item = rumps.MenuItem(
+                label,
+                callback=self._on_toggle_auto_switch if possible else None,
+            )
             item._provider = provider
-            item.state = 1 if settings.auto_switch.get(provider, False) else 0
+            item.state = 1 if possible and settings.auto_switch.get(provider, False) else 0
             auto_menu.add(item)
         parent.add(auto_menu)
 
@@ -705,6 +722,38 @@ class ClaudeSwitcherApp(rumps.App):
         return UsageState(available=False, display="Usage unavailable",
                           reason="the app hit an unexpected error")
 
+    def _budget_rates(self) -> dict[tuple[str, str], float]:
+        """Tokens per one percent, per account and window, from the recorded series.
+
+        Only computed when an auto-switch is actually about to happen. It reads a
+        week of transcripts, which is seconds of work - fine once in a while on a
+        background thread, wasteful every five minutes for a decision that is not
+        being made.
+        """
+        now = time.time()
+        if self._budget_rates_at and now - self._budget_rates_at < BUDGET_RATE_TTL_SECONDS:
+            return self._budget_rates_cache
+        rates: dict[tuple[str, str], float] = {}
+        try:
+            records = load_records(since_days(7))
+            samples = usage_log.load()
+            totals: dict[tuple[str, str], list[float]] = {}
+            for step in usage_log.steps(samples):
+                spent = tokens_between(
+                    records, step.at - timedelta(minutes=step.minutes), step.at
+                )
+                bucket = totals.setdefault((step.account, step.label), [0.0, 0.0])
+                bucket[0] += spent
+                bucket[1] += step.delta_percent
+            for key, (spent, percent) in totals.items():
+                if percent > 0:
+                    rates[key] = spent / percent
+        except Exception:
+            rates = {}
+        self._budget_rates_cache = rates
+        self._budget_rates_at = now
+        return rates
+
     def _attempt_auto_switch(self, provider: str) -> dict | None:
         settings = load_settings(self.config_path)
         active = get_active_account(self.config_path, provider=provider)
@@ -733,6 +782,7 @@ class ClaudeSwitcherApp(rumps.App):
             usage_by_account=self._usage_state_cache,
             has_credentials=self._has_credentials,
             threshold=settings.auto_switch_threshold,
+            per_point=self._budget_rates(),
         )
         if not target:
             return {"status": "no_target", "provider": provider, "email": active.email}
