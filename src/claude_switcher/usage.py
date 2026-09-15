@@ -165,6 +165,8 @@ def fetch_active_usage_detail() -> tuple[dict | None, str | None]:
 
 def _format_reset_delta(resets_at: str) -> str:
     """Convert an ISO 8601 resets_at timestamp to a human-readable relative time."""
+    if not isinstance(resets_at, str):
+        return "?"
     try:
         # Strip fractional seconds for simpler parsing
         cleaned = resets_at.replace("Z", "+00:00")
@@ -207,7 +209,12 @@ def claude_usage_state(usage: dict | None, reason: str | None = None) -> UsageSt
         except (TypeError, ValueError):
             continue
 
-        reset = _format_reset_delta(window["resets_at"]) if "resets_at" in window else None
+        # resets_at is present but null on a window that is not running - an
+        # account you have not used today has nothing counting down. The key
+        # test said "present", which it is, and formatting None threw, which
+        # the caller swallowed into a bare "Usage unavailable". That is why an
+        # idle account showed no reading while the API was answering 200.
+        reset = _format_reset_delta(window["resets_at"]) if window.get("resets_at") else None
         reset_suffix = f" ({reset})" if reset else ""
         parts.append(f"{label} {percent:.0f}%{reset_suffix}")
         windows.append(UsageWindow(label=label, percent=percent, resets_in=reset))

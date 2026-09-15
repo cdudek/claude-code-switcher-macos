@@ -238,3 +238,45 @@ class TestFetchUsageRefresh:
 
         usage.fetch_usage("claude-switcher:a@b.c")
         assert calls["written"] == [("claude-switcher:a@b.c", new)]
+
+
+class TestNullResetTime:
+    """The bug behind "Usage unavailable" on an idle account.
+
+    The API answers 200 with the window present and resets_at null - nothing is
+    counting down when you have not used the account. `"resets_at" in window`
+    was true, formatting None threw AttributeError, and the caller turned the
+    whole account into one unexplained "Usage unavailable".
+    """
+
+    def test_a_null_reset_still_reports_the_percentage(self):
+        state = claude_usage_state({
+            "five_hour": {"utilization": 27.0, "resets_at": None},
+            "seven_day": {"utilization": 15.0, "resets_at": None},
+        })
+        assert state.available
+        assert "5h 27%" in state.display
+        assert state.windows[0].resets_in is None
+
+    def test_a_null_reset_does_not_raise(self):
+        claude_usage_state({"five_hour": {"utilization": 1.0, "resets_at": None}})
+
+    def test_a_real_reset_is_still_formatted(self):
+        future = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        state = claude_usage_state({"five_hour": {"utilization": 1.0, "resets_at": future}})
+        assert state.windows[0].resets_in is not None
+
+    def test_a_non_string_reset_is_not_fatal(self):
+        assert _format_reset_delta(None) == "?"
+        assert _format_reset_delta(12345) == "?"
+
+
+class TestCodexNullResetTime:
+    def test_a_null_reset_still_reports_the_percentage(self):
+        from claude_switcher.codex_usage import codex_usage_state
+        state = codex_usage_state({"rate_limit": {
+            "primary_window": {"used_percent": 3.0, "reset_at": None},
+            "secondary_window": {"used_percent": 9.0, "reset_at": None},
+        }})
+        assert state.available
+        assert "1h 3%" in state.display

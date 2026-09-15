@@ -182,7 +182,7 @@ def codex_usage_state(usage: dict | None, reason: str | None = None) -> UsageSta
             percent = float(window["used_percent"])
         except (TypeError, ValueError):
             continue
-        reset = _format_reset_delta(window["reset_at"]) if "reset_at" in window else None
+        reset = _format_reset_delta(window["reset_at"]) if window.get("reset_at") else None
         reset_suffix = f" ({reset})" if reset else ""
         parts.append(f"{label} {percent:.0f}%{reset_suffix}")
         windows.append(UsageWindow(label=label, percent=percent, resets_in=reset))
