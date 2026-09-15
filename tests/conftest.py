@@ -33,3 +33,36 @@ def _backups_stay_in_the_sandbox(tmp_path, monkeypatch):
     """
     from code_agent_switcher import backups
     monkeypatch.setattr(backups, "BACKUP_DIR", tmp_path / "backups")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_security_cli(monkeypatch):
+    """No test may run the real `security` binary.
+
+    Three keychain tests fell through to a real Keychain write the moment a
+    mock stopped covering the write path, leaving fixture items in the login
+    keychain and putting up an unlock dialog per read. The first version of this
+    guard inspected the Keychain to detect it - which is itself a prompting
+    call, and unusable in CI. This one needs no Keychain access at all: a test
+    that wants the CLI patches `subprocess.run` itself, and a decorator's patch
+    is applied after this fixture, so it wins.
+    """
+    import subprocess as real_subprocess
+
+    from code_agent_switcher import keychain
+
+    def _refuse(*args, **kwargs):
+        raise AssertionError(
+            f"a test tried to run the real security CLI: {args[0] if args else kwargs}"
+        )
+
+    # Replace the module reference inside `keychain` only. Patching
+    # `keychain.subprocess.run` would reach the one shared module object and
+    # break every other test that legitimately shells out - `ditto` in the
+    # updater tests, for one.
+    class _Refusing:
+        run = staticmethod(_refuse)
+        TimeoutExpired = real_subprocess.TimeoutExpired
+        SubprocessError = real_subprocess.SubprocessError
+
+    monkeypatch.setattr(keychain, "subprocess", _Refusing)

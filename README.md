@@ -3,11 +3,9 @@
 Switch between several Claude Code and Codex CLI accounts from the menu bar,
 without logging out, opening a browser, and logging back in every time.
 
-> A fork of [Symbioose/claude-account-switcher](https://github.com/Symbioose/claude-account-switcher)
-> by [Emile Jouannet](https://github.com/Symbioose), who wrote the app. This fork fixes
-> six ways a saved sign-in was silently destroyed, and adds a usage report, self-update
-> and a real installer. The fixes are offered back upstream as
-> [PR #11](https://github.com/Symbioose/claude-account-switcher/pull/11).
+> A fork of claude-account-switcher by Emile Jouannet, who wrote the app. This fork
+> fixes six ways a saved sign-in was silently destroyed, and adds a usage report,
+> self-update and a real installer.
 
 ## Install
 
@@ -131,8 +129,7 @@ healthy in the menu.
    no hint that the fix is to remove the account and add it back. It now offers
    *Sign in again* / *Remove account* / *Cancel*.
 
-The measurements behind each are in
-[the upstream PR](https://github.com/Symbioose/claude-account-switcher/pull/11).
+The measurements behind each are in the commit history.
 
 ## claude.ai connectors do not survive a switch, and nothing can make them
 
@@ -269,7 +266,7 @@ choosing between them means guessing which binary to run.
 
 ## Credits
 
-**[Emile Jouannet](https://github.com/Symbioose) wrote this app** — the menu bar UI,
+**Emile Jouannet wrote this app** — the menu bar UI,
 the Keychain-backed account store, the usage meters, auto-switch and Codex support
 are all his.
 

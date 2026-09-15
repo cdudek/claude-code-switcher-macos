@@ -34,7 +34,7 @@ OPTIONS = {
     "plist": {
         "CFBundleName": "Code Agent Switcher",
         "CFBundleDisplayName": "Code Agent Switcher",
-        "CFBundleIdentifier": "com.emilejouannet.claude-switcher",
+        "CFBundleIdentifier": "com.cdudek.code-agent-switcher",
         "CFBundleVersion": VERSION,
         "CFBundleShortVersionString": VERSION,
         "LSUIElement": True,
