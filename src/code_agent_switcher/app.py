@@ -151,6 +151,14 @@ class ClaudeSwitcherApp(rumps.App):
         self._usage_state_cache: dict[tuple[str, str], UsageState] = {}
         self._usage_items: dict[tuple[str, str], object] = {}
         self._card_meta: dict[tuple[str, str], tuple[str, str, bool]] = {}
+        # Which claude.ai connectors each account has. Read far less often than
+        # usage: it changes when someone authorises a connector by hand, which
+        # is rare, and the endpoint is slower. It lives up here with the other
+        # caches because _rebuild_menu() reads it, and _rebuild_menu() is called
+        # from this constructor - setting it further down cost a crash on every
+        # launch of v0.12.0.
+        self._connectors_cache: dict = {}
+        self._connectors_at: dict = {}
         self._menu_open = False
         self._open_timer = None
         self._accounts_window = AccountsWindowController(self)
@@ -171,11 +179,6 @@ class ClaudeSwitcherApp(rumps.App):
         self._report_in_progress = False
         self._budget_rates_cache: dict = {}
         self._budget_rates_at = 0.0
-        # Which claude.ai connectors each account has. Read far less often than
-        # usage: it changes when someone authorises a connector by hand, which
-        # is rare, and the endpoint is slower.
-        self._connectors_cache: dict = {}
-        self._connectors_at: dict = {}
         self._update_timer = rumps.Timer(self._on_periodic_update_check, UPDATE_CHECK_INTERVAL_SECONDS)
         self._update_timer.start()
         # The first tick of a rumps.Timer fires immediately; defer the launch

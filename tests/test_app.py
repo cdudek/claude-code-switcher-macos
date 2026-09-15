@@ -259,3 +259,69 @@ class TestConnectorFooter:
                             lambda ref: (None, "no answer from the API"))
         assert app._connectors_for(self._account()) == good
         assert app._connectors_cache[self.OTHER] == good
+
+
+class TestConstructorOrdering:
+    """`__init__` calls `_rebuild_menu()`, which reads caches that `__init__`
+    itself sets up. v0.12.0 set one of them six lines too late and crashed on
+    every launch; the footer tests never saw it because they build the object
+    with `__new__` and assign the attributes by hand. This runs the real
+    constructor."""
+
+    def _build(self, monkeypatch, tmp_path, accounts):
+        import rumps
+        from code_agent_switcher import app as app_mod
+
+        monkeypatch.setattr(rumps.App, "__init__", lambda self, *a, **k: None)
+        monkeypatch.setattr(rumps.App, "menu", _FakeMenu(), raising=False)
+        monkeypatch.setattr(rumps, "Timer", lambda *a, **k: _FakeTimer())
+        monkeypatch.setattr(app_mod.threading, "Timer", lambda *a, **k: _FakeTimer())
+        monkeypatch.setattr(app_mod, "icon_path", lambda: None)
+        monkeypatch.setattr(app_mod, "AccountsWindowController", lambda app: object())
+        monkeypatch.setattr(app_mod, "load_accounts", lambda path: accounts)
+        monkeypatch.setattr(app_mod.ClaudeSwitcherApp, "_first_launch", lambda self: None)
+        monkeypatch.setattr(app_mod.ClaudeSwitcherApp, "_fetch_all_usage", lambda self: None)
+        monkeypatch.setattr(app_mod.ClaudeSwitcherApp, "_live_active_ref",
+                            lambda self, provider: None)
+        monkeypatch.setattr(app_mod.ClaudeSwitcherApp, "config_path", tmp_path / "c.json",
+                            raising=False)
+        return app_mod.ClaudeSwitcherApp()
+
+    def test_the_constructor_builds_a_menu_with_an_account_in_it(self, monkeypatch, tmp_path):
+        """One account is what it takes: an empty list never reaches _card_for,
+        which is where the missing attribute was read."""
+        from code_agent_switcher.config import AccountInfo
+        app = self._build(monkeypatch, tmp_path,
+                          [AccountInfo("a@x.com", "max", "", True, "acct")])
+        assert app._connectors_cache == {}
+        assert app._connectors_at == {}
+
+
+class _FakeTimer:
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+class _FakeMenu:
+    def __init__(self):
+        self._menu = _FakeNSMenu()
+
+    def clear(self):
+        pass
+
+    def add(self, item):
+        pass
+
+
+class _FakeNSMenu:
+    def setDelegate_(self, d):
+        pass
+
+    def setAutoenablesItems_(self, flag):
+        pass
+
+    def addItem_(self, item):
+        pass
