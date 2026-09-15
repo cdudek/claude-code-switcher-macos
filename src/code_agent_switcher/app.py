@@ -221,6 +221,12 @@ class ClaudeSwitcherApp(rumps.App):
 
         nsmenu = self.menu._menu
         nsmenu.setDelegate_(self._watcher)
+        # NSMenu.update() runs every time the menu opens and, with automatic
+        # enabling on, disables any item that has no target and action. A
+        # view-based item has neither by design, so every account card was
+        # disabled the moment the panel appeared - and a disabled item's view
+        # receives no mouse events. That is why clicking a card did nothing.
+        nsmenu.setAutoenablesItems_(False)
         nsmenu.addItem_(ui.menu_item_with_view(ui.panel_title("Usage")))
 
         for provider in ("claude", "codex"):

@@ -159,3 +159,32 @@ class TestClickableCards:
 
     def test_a_clickable_item_is_enabled(self):
         assert ui.menu_item_with_view(ui.spacer(), enabled=True).isEnabled() is True
+
+
+class TestMenuKeepsCardsEnabled:
+    """NSMenu.update() runs on every open and, with automatic enabling on,
+    disables any item with no target and action - which a view-based item never
+    has. A disabled item's view gets no mouse events, so the card was dead."""
+
+    def _menu(self, autoenables):
+        import AppKit
+        menu = AppKit.NSMenu.alloc().init()
+        menu.setAutoenablesItems_(autoenables)
+        card = ui.card_row("a@b.c", "team", False, [("5h", 1.0, None)],
+                           on_click=lambda: None)
+        item = ui.menu_item_with_view(card, enabled=True)
+        menu.addItem_(item)
+        menu.update()
+        return item
+
+    def test_a_clickable_card_survives_the_menu_opening(self):
+        assert self._menu(False).isEnabled() is True
+
+    def test_automatic_enabling_is_what_killed_it(self):
+        """Kept as the record of the cause: with it on, the item is disabled."""
+        assert self._menu(True).isEnabled() is False
+
+    def test_the_app_turns_automatic_enabling_off(self):
+        import inspect
+        from code_agent_switcher import app
+        assert "setAutoenablesItems_(False)" in inspect.getsource(app.ClaudeSwitcherApp._rebuild_menu)
