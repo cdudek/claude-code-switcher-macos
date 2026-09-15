@@ -6,6 +6,8 @@ URL, a zip that escapes its directory, an archive with no app in it.
 """
 
 import io
+import os
+import stat
 import json
 import zipfile
 from pathlib import Path
@@ -21,6 +23,7 @@ from claude_switcher.updater import (
     is_newer,
     is_trusted_asset,
     parse_version,
+    swap_script,
 )
 
 GOOD_URL = f"https://github.com/{REPO}/releases/download/v9.9.9/Claude-Switcher-v9.9.9.zip"
@@ -94,12 +97,31 @@ class TestAssetSelection:
         assert _asset_url(release) is None
 
 
-def _zip(entries: dict[str, bytes]) -> bytes:
+def _plist(executable: str | None = "Claude Switcher") -> bytes:
+    import plistlib
+    return plistlib.dumps({"CFBundleExecutable": executable} if executable else {})
+
+
+def _zip(entries: dict[str, bytes], executable: tuple[str, ...] = ()) -> bytes:
+    """Build an archive, carrying the Unix mode the way a real macOS zip does."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for name, data in entries.items():
-            zf.writestr(name, data)
+            info = zipfile.ZipInfo(name)
+            mode = 0o755 if name in executable else 0o644
+            info.external_attr = (stat.S_IFREG | mode) << 16
+            zf.writestr(info, data)
     return buf.getvalue()
+
+
+APP = "Claude Switcher.app"
+EXE = f"{APP}/Contents/MacOS/Claude Switcher"
+
+
+def _good_app(**overrides) -> bytes:
+    entries = {f"{APP}/Contents/Info.plist": _plist(), EXE: b"bin"}
+    entries.update(overrides.pop("entries", {}))
+    return _zip(entries, executable=overrides.pop("executable", (EXE,)))
 
 
 class TestDownloadValidation:
@@ -113,10 +135,7 @@ class TestDownloadValidation:
 
     @patch("claude_switcher.updater.urlopen")
     def test_unpacks_a_good_archive(self, mock_open, tmp_path):
-        mock_open.return_value = self._serve(_zip({
-            "Claude Switcher.app/Contents/Info.plist": b"<plist/>",
-            "Claude Switcher.app/Contents/MacOS/Claude Switcher": b"bin",
-        }))
+        mock_open.return_value = self._serve(_good_app())
         app = download_update(GOOD_URL, tmp_path)
         assert app.name == "Claude Switcher.app"
         assert (app / "Contents" / "Info.plist").is_file()
@@ -125,7 +144,7 @@ class TestDownloadValidation:
     def test_rejects_a_zip_that_escapes_its_directory(self, mock_open, tmp_path):
         """Zip slip: an entry naming ../ would overwrite files outside the staging dir."""
         mock_open.return_value = self._serve(_zip({
-            "Claude Switcher.app/Contents/Info.plist": b"<plist/>",
+            "Claude Switcher.app/Contents/Info.plist": _plist(),
             "../../../../tmp/pwned": b"x",
         }))
         with pytest.raises(ValueError, match="unsafe path"):
@@ -141,8 +160,8 @@ class TestDownloadValidation:
     @patch("claude_switcher.updater.urlopen")
     def test_rejects_an_archive_with_two_apps(self, mock_open, tmp_path):
         mock_open.return_value = self._serve(_zip({
-            "A.app/Contents/Info.plist": b"<plist/>",
-            "B.app/Contents/Info.plist": b"<plist/>",
+            "A.app/Contents/Info.plist": _plist(),
+            "B.app/Contents/Info.plist": _plist(),
         }))
         with pytest.raises(ValueError, match="exactly one"):
             download_update(GOOD_URL, tmp_path)
@@ -163,8 +182,7 @@ class TestDownloadValidation:
     @patch("claude_switcher.updater.urlopen")
     def test_ignores_the_macosx_metadata_folder(self, mock_open, tmp_path):
         """macOS' own zip writes __MACOSX/ alongside the real bundle."""
-        mock_open.return_value = self._serve(_zip({
-            "Claude Switcher.app/Contents/Info.plist": b"<plist/>",
+        mock_open.return_value = self._serve(_good_app(entries={
             "__MACOSX/Claude Switcher.app/Contents/Info.plist": b"junk",
         }))
         assert download_update(GOOD_URL, tmp_path).name == "Claude Switcher.app"
@@ -321,3 +339,54 @@ class TestBackupPath:
     def test_names_the_app_it_backs_up(self):
         from claude_switcher.updater import backup_path
         assert backup_path(Path("/x/Foo.app")).name == ".Foo.app.previous"
+
+
+class TestUnpackedBundleMustBeLaunchable:
+    """v0.7.3 shipped an app nobody could open: zipfile.extractall drops the
+    executable bit, so launchd answered "Launch failed" (POSIX 111)."""
+
+    def _serve(self, payload: bytes):
+        resp = MagicMock()
+        chunks = [payload[i:i+65536] for i in range(0, len(payload), 65536)] + [b""]
+        resp.read.side_effect = chunks
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = lambda s, *a: False
+        return resp
+
+    @patch("claude_switcher.updater.urlopen")
+    def test_the_executable_bit_survives_unpacking(self, mock_open, tmp_path):
+        mock_open.return_value = self._serve(_good_app())
+        app = download_update(GOOD_URL, tmp_path)
+        exe = app / "Contents" / "MacOS" / "Claude Switcher"
+        assert os.access(exe, os.X_OK)
+
+    @patch("claude_switcher.updater.urlopen")
+    def test_rejects_an_app_whose_executable_is_not_executable(self, mock_open, tmp_path):
+        mock_open.return_value = self._serve(_good_app(executable=()))
+        with pytest.raises(ValueError, match="not executable"):
+            download_update(GOOD_URL, tmp_path)
+
+    @patch("claude_switcher.updater.urlopen")
+    def test_rejects_an_app_with_no_cfbundleexecutable(self, mock_open, tmp_path):
+        payload = _zip({f"{APP}/Contents/Info.plist": _plist(None), EXE: b"bin"},
+                       executable=(EXE,))
+        mock_open.return_value = self._serve(payload)
+        with pytest.raises(ValueError, match="CFBundleExecutable"):
+            download_update(GOOD_URL, tmp_path)
+
+    @patch("claude_switcher.updater.urlopen")
+    def test_rejects_an_app_with_no_executable_file(self, mock_open, tmp_path):
+        payload = _zip({f"{APP}/Contents/Info.plist": _plist(),
+                        f"{APP}/Contents/Resources/x": b"y"})
+        mock_open.return_value = self._serve(payload)
+        with pytest.raises(ValueError, match="no executable at"):
+            download_update(GOOD_URL, tmp_path)
+
+
+class TestLegacyBackupIsSwept:
+    def test_the_undotted_pre_0_7_1_backup_is_removed_too(self):
+        script = swap_script(Path("/s/App.app"), Path("/Applications/App.app"),
+                             Path("/Applications/.App.app.previous"),
+                             Path("/tmp/l.log"), 42)
+        assert '-name "*.app.previous"' in script
+        assert '-name ".*.previous"' in script

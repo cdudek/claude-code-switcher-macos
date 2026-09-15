@@ -157,9 +157,22 @@ def download_update(url: str, into: Path) -> Path:
             out.write(chunk)
 
     unpacked = into / "unpacked"
+    # Validate the entry names with zipfile, then unpack with ditto.
+    #
+    # zipfile.extractall CANNOT unpack a macOS bundle. It drops the Unix mode
+    # bits, so Contents/MacOS/<exe> lands as 0644 and launchd refuses to spawn
+    # it ("Launch failed", POSIX 111), and it writes every symlink as a plain
+    # file holding its target path, which breaks Python.framework and voids the
+    # signature. Measured on the v0.7.3 archive: ditto gives 0755 and 3 symlinks,
+    # zipfile gives 0644 and none. Every in-app update before this shipped an app
+    # that could not be opened.
     with zipfile.ZipFile(archive) as zf:
         _safe_members(zf)
-        zf.extractall(unpacked)
+    unpacked.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["/usr/bin/ditto", "-x", "-k", str(archive), str(unpacked)],
+        check=True, capture_output=True,
+    )
 
     apps = [p for p in unpacked.rglob("*.app") if p.is_dir()]
     apps = [p for p in apps if "__MACOSX" not in p.parts]
@@ -168,7 +181,29 @@ def download_update(url: str, into: Path) -> Path:
     app = apps[0]
     if not (app / "Contents" / "Info.plist").is_file():
         raise ValueError("the .app in the archive has no Info.plist")
+    _require_launchable(app)
     return app
+
+
+def _require_launchable(app: Path) -> None:
+    """Refuse an unpacked bundle whose executable cannot be run.
+
+    Checked before the running app is killed, so a broken archive is a message
+    instead of an empty /Applications and a dialog that says the app cannot be
+    opened.
+    """
+    try:
+        info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+    except Exception as exc:
+        raise ValueError(f"unreadable Info.plist in the update: {exc}") from exc
+    name = info.get("CFBundleExecutable")
+    if not name:
+        raise ValueError("the .app in the archive names no CFBundleExecutable")
+    exe = app / "Contents" / "MacOS" / name
+    if not exe.is_file():
+        raise ValueError(f"the update has no executable at Contents/MacOS/{name}")
+    if not os.access(exe, os.X_OK):
+        raise ValueError(f"the update's {name} is not executable - the archive unpacked wrong")
 
 
 def swap_script(staged_app: Path, target: Path, backup: Path, log: Path, pid: int) -> str:
@@ -213,8 +248,11 @@ if ditto {q(str(staged_app))} {q(str(target))} \
   xattr -dr com.apple.quarantine {q(str(target))} 2>/dev/null || true
   echo "installed ok"
   rm -rf {q(str(staged_app))}
-  # Keep exactly one rollback copy, not one per update.
-  find "$(dirname {q(str(target))})" -maxdepth 1 -name ".*.previous" \
+  # Keep exactly one rollback copy, not one per update. The un-dotted name is
+  # what versions before 0.7.1 wrote; it sits visible in /Applications forever
+  # unless it is swept here too.
+  find "$(dirname {q(str(target))})" -maxdepth 1 \
+       \\( -name ".*.previous" -o -name "*.app.previous" \\) \\
        ! -path {q(str(backup))} -exec rm -rf {{}} + 2>/dev/null || true
 else
   echo "FATAL: install failed, restoring the previous version"
