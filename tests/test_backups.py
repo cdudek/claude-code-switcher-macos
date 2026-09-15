@@ -138,3 +138,19 @@ class TestTheCopiesAreNotAWeakerCopy:
     def test_only_five_copies_of_a_credential_file_are_kept(self, tmp_path):
         """Every extra copy is another plaintext copy of a working secret."""
         assert backups.KEEP_PER_FILE == 5
+
+
+class TestCodexBackupActuallyStores:
+    """It called itself instead of writing, so every refreshed Codex blob raised
+    RecursionError and the snapshot silently went stale."""
+
+    def test_it_writes_the_blob_under_the_account_service(self, monkeypatch):
+        from code_agent_switcher import codex_core
+        written = []
+        monkeypatch.setattr(codex_core.keychain, "write_credentials",
+                            lambda s, a, p: written.append((s, a, p)))
+        blob = '{"tokens": {"id_token": "x", "access_token": "a", "refresh_token": "r"}}'
+        monkeypatch.setattr(codex_core, "normalize_codex_credentials_blob", lambda c: blob)
+        monkeypatch.setattr(codex_core, "_codex_email_from_credentials", lambda c: "a@b.com")
+        assert codex_core.backup_codex_credentials(blob) == "a@b.com"
+        assert written == [(f"{codex_core.CODEX_KEYCHAIN_PREFIX}a@b.com", "a@b.com", blob)]

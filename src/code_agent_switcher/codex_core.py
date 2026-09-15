@@ -243,7 +243,10 @@ def backup_codex_credentials(creds: str) -> str | None:
     if not email:
         return None
     _validate_email(email)
-    backup_codex_credentials(creds)
+    # Called itself here since 2026-05-19 (8b9ca7e), so every refreshed Codex
+    # blob raised RecursionError instead of being stored, and the snapshot went
+    # stale. Reached from codex_usage.fetch_active_codex_usage after a refresh.
+    keychain.write_credentials(f"{CODEX_KEYCHAIN_PREFIX}{email}", email, creds)
     return email
 
 
