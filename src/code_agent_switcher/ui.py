@@ -89,22 +89,73 @@ class BarView(AppKit.NSView):
 
 
 class CardView(AppKit.NSView):
-    """A rounded card. The active one is lifted, the rest sit flat."""
+    """A rounded card. The active one is lifted, the rest sit flat.
+
+    Clicking one switches to that account: the panel IS the switcher, which is
+    the whole point of the app, and making people open a window to do the one
+    thing they opened the menu for was a step too many.
+    """
 
     def initWithFrame_active_(self, frame, active):
         self = objc.super(CardView, self).initWithFrame_(frame)
         if self is None:
             return None
         self._active = bool(active)
+        self._on_click = None
+        self._hover = False
         return self
+
+    def setOnClick_(self, handler):
+        self._on_click = handler
+        self.updateTrackingAreas()
+
+    def isClickable(self):
+        return self._on_click is not None
+
+    def updateTrackingAreas(self):
+        for area in list(self.trackingAreas()):
+            self.removeTrackingArea_(area)
+        if self._on_click is None:
+            return
+        options = (
+            AppKit.NSTrackingMouseEnteredAndExited
+            | AppKit.NSTrackingActiveInActiveApp
+            | AppKit.NSTrackingInVisibleRect
+        )
+        self.addTrackingArea_(
+            AppKit.NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
+                self.bounds(), options, self, None
+            )
+        )
+
+    def mouseEntered_(self, event):
+        self._hover = True
+        self.setNeedsDisplay_(True)
+
+    def mouseExited_(self, event):
+        self._hover = False
+        self.setNeedsDisplay_(True)
+
+    def mouseUp_(self, event):
+        if self._on_click is None:
+            return
+        # Dismiss the menu first: the switch takes a second or two and a panel
+        # left hanging open over it reads as a click that did nothing.
+        item = self.enclosingMenuItem()
+        if item is not None and item.menu() is not None:
+            item.menu().cancelTracking()
+        self._on_click()
 
     def drawRect_(self, rect):
         bounds = AppKit.NSInsetRect(self.bounds(), 0.5, 0.5)
         path = AppKit.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(bounds, 8, 8)
-        if self._active:
-            AppKit.NSColor.labelColor().colorWithAlphaComponent_(0.08).setFill()
+        if self._hover:
+            alpha = 0.14
+        elif self._active:
+            alpha = 0.08
         else:
-            AppKit.NSColor.labelColor().colorWithAlphaComponent_(0.04).setFill()
+            alpha = 0.04
+        AppKit.NSColor.labelColor().colorWithAlphaComponent_(alpha).setFill()
         path.fill()
         AppKit.NSColor.separatorColor().setStroke()
         path.setLineWidth_(1.0)
@@ -258,9 +309,14 @@ def spacer(height: float = 6.0) -> AppKit.NSView:
     return AppKit.NSView.alloc().initWithFrame_(NSMakeRect(0, 0, PANEL_WIDTH, height))
 
 
-def menu_item_with_view(view: AppKit.NSView) -> AppKit.NSMenuItem:
+def menu_item_with_view(view: AppKit.NSView, enabled: bool = False) -> AppKit.NSMenuItem:
+    """A menu item that is a view.
+
+    Disabled by default: a decorative row that highlights on hover looks like a
+    control and is not one. A clickable card passes enabled=True.
+    """
     item = AppKit.NSMenuItem.alloc().init()
-    item.setEnabled_(False)
+    item.setEnabled_(enabled)
     item.setView_(view)
     return item
 
@@ -299,9 +355,12 @@ def set_symbol(item, name: str) -> None:
         pass
 
 
-def card_row(email: str, plan: str, active: bool, rows, reason: str | None = None) -> AppKit.NSView:
+def card_row(email: str, plan: str, active: bool, rows, reason: str | None = None,
+             on_click=None) -> AppKit.NSView:
     """A card in a full-width wrapper: side padding, and a gap below it."""
     card = account_card(email, plan, active, rows, reason)
+    if on_click is not None:
+        card.setOnClick_(on_click)
     height = card.frame().size.height
     wrapper = AppKit.NSView.alloc().initWithFrame_(
         NSMakeRect(0, 0, PANEL_WIDTH, height + CARD_GAP)

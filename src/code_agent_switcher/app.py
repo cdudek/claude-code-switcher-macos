@@ -235,7 +235,7 @@ class ClaudeSwitcherApp(rumps.App):
                 self._card_meta[key] = (
                     account.email, account.subscription_type or "", active
                 )
-                item = ui.menu_item_with_view(self._card_for(key))
+                item = ui.menu_item_with_view(self._card_for(key), enabled=not active)
                 nsmenu.addItem_(item)
                 self._usage_items[key] = item
             nsmenu.addItem_(ui.menu_item_with_view(ui.spacer(2)))
@@ -270,11 +270,16 @@ class ClaudeSwitcherApp(rumps.App):
     def _card_for(self, key):
         """Build one account card from the cached reading."""
         email, plan, active = self._card_meta.get(key, ("", "", False))
+        provider = key[0]
         state = self._usage_state_cache.get(key)
+        on_click = None
+        if not active and email:
+            on_click = lambda: self._switch_account(provider, email)  # noqa: E731
         return ui.card_row(
             email, plan, active,
             ui.rows_for(state) if state else [],
             reason=getattr(state, "reason", None) if state else "reading\u2026",
+            on_click=on_click,
         )
 
     # -- polling ---------------------------------------------------------

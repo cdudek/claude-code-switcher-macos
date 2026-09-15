@@ -116,3 +116,46 @@ class TestCardPadding:
         card = wrapper.subviews()[0]
         assert card.frame().origin.y == ui.CARD_GAP
         assert wrapper.frame().size.height == card.frame().size.height + ui.CARD_GAP
+
+
+class TestClickableCards:
+    """The panel is the switcher. A card that cannot be clicked sends people to
+    a window to do the thing they opened the menu for."""
+
+    def test_a_card_with_a_handler_is_clickable(self):
+        wrapper = ui.card_row("a@b.c", "team", False, [("5h", 1.0, None)],
+                              on_click=lambda: None)
+        assert wrapper.subviews()[0].isClickable()
+
+    def test_a_card_without_one_is_not(self):
+        wrapper = ui.card_row("a@b.c", "team", True, [("5h", 1.0, None)])
+        assert not wrapper.subviews()[0].isClickable()
+
+    def test_clicking_calls_the_handler(self):
+        called = []
+        wrapper = ui.card_row("a@b.c", "team", False, [("5h", 1.0, None)],
+                              on_click=lambda: called.append(True))
+        wrapper.subviews()[0].mouseUp_(None)
+        assert called == [True]
+
+    def test_clicking_a_card_with_no_handler_does_nothing(self):
+        wrapper = ui.card_row("a@b.c", "team", True, [("5h", 1.0, None)])
+        wrapper.subviews()[0].mouseUp_(None)  # must not raise
+
+    def test_only_a_clickable_card_tracks_the_mouse(self):
+        """Hover highlight on a row that does nothing reads as a broken control."""
+        plain = ui.card_row("a@b.c", "team", True, [("5h", 1.0, None)]).subviews()[0]
+        live = ui.card_row("a@b.c", "team", False, [("5h", 1.0, None)],
+                           on_click=lambda: None).subviews()[0]
+        # AppKit calls this itself on resize and on becoming visible, so the
+        # guard has to hold when it is called, not only when it is not.
+        plain.updateTrackingAreas()
+        live.updateTrackingAreas()
+        assert len(plain.trackingAreas()) == 0
+        assert len(live.trackingAreas()) == 1
+
+    def test_a_decorative_item_stays_disabled(self):
+        assert ui.menu_item_with_view(ui.spacer()).isEnabled() is False
+
+    def test_a_clickable_item_is_enabled(self):
+        assert ui.menu_item_with_view(ui.spacer(), enabled=True).isEnabled() is True

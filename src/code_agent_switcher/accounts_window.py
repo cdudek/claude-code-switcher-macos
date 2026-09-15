@@ -1,11 +1,9 @@
 """The Manage Accounts screen.
 
-Switching, adding and removing moved out of the menu and into a window. In the
-menu they were three separate places - a click on a row, an "Add ..." item, a
-"Remove account" submenu - and the row you clicked to switch was also the row
-that showed usage, so the panel could not be read without being a control.
-
-The window owns the actions; the menu panel is now only a reading.
+Adding, removing and re-signing-in live here. Choosing which account is in use
+does not: that happens in the menu bar panel, next to the usage numbers that
+inform the choice. Splitting it across two screens meant the numbers were in one
+place and the decision in another.
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ import AppKit
 import objc
 from Foundation import NSMakeRect
 
-from code_agent_switcher.ui import PillView, _label, pill_width
+from code_agent_switcher.ui import DotView, PillView, _label, pill_width
 
 WIDTH = 520.0
 ROW_HEIGHT = 44.0
@@ -37,9 +35,6 @@ class _RowActions(AppKit.NSObject):
 
     def showMenu_(self, sender):
         menu = AppKit.NSMenu.alloc().init()
-        if not self._active:
-            item = menu.addItemWithTitle_action_keyEquivalent_("Switch to this account", "switch:", "")
-            item.setTarget_(self)
         item = menu.addItemWithTitle_action_keyEquivalent_("Sign in again", "signIn:", "")
         item.setTarget_(self)
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
@@ -48,31 +43,11 @@ class _RowActions(AppKit.NSObject):
         point = AppKit.NSPoint(0, sender.frame().size.height + 2)
         menu.popUpMenuPositioningItem_atLocation_inView_(None, point, sender)
 
-    def switch_(self, _):
-        self._controller.switchAccount(self._provider, self._email)
-
     def signIn_(self, _):
         self._controller.addAccount(self._provider)
 
     def remove_(self, _):
         self._controller.removeAccount(self._provider, self._email)
-
-
-class _SelectAction(AppKit.NSObject):
-    """The radio on a row. Selecting an account IS switching to it."""
-
-    def initWithController_email_provider_(self, controller, email, provider):
-        self = objc.super(_SelectAction, self).init()
-        if self is None:
-            return None
-        self._controller = controller
-        self._email = email
-        self._provider = provider
-        return self
-
-    def fire_(self, sender):
-        if sender.state() == AppKit.NSControlStateValueOn:
-            self._controller.switchAccount(self._provider, self._email)
 
 
 class _AddAction(AppKit.NSObject):
@@ -221,37 +196,28 @@ class AccountsWindowController:
         self.window.setContentView_(content)
 
     def _add_row(self, group, account, y, is_active) -> None:
-        # A radio, not a dot and a hidden menu: the list shows which account is
-        # in use and picking another one is the switch. The old row put that
-        # behind a "..." and left the visible control doing nothing.
-        select = _SelectAction.alloc().initWithController_email_provider_(
-            self, account.email, account.provider
-        )
-        self._keep_alive.append(select)
-        radio = AppKit.NSButton.alloc().initWithFrame_(
-            NSMakeRect(16, y + ROW_HEIGHT / 2 - 9, 300, 18)
-        )
-        radio.setButtonType_(AppKit.NSButtonTypeRadio)
-        radio.setTitle_("  " + account.email)
-        radio.setFont_(AppKit.NSFont.systemFontOfSize_(13.0))
-        radio.setState_(
-            AppKit.NSControlStateValueOn if is_active else AppKit.NSControlStateValueOff
-        )
-        radio.setTarget_(select)
-        radio.setAction_("fire:")
-        group.addSubview_(radio)
+        """Identity, plan, and a menu. No selector.
 
-        attrs = {AppKit.NSFontAttributeName: AppKit.NSFont.systemFontOfSize_(13.0)}
-        text_width = AppKit.NSString.stringWithString_(
-            "  " + account.email
-        ).sizeWithAttributes_(attrs).width
-        frame = AppKit.NSMakeSize(text_width + 22, 18)
+        Choosing an account happens in the menu bar panel, where the usage that
+        informs the choice already is. A radio here was a second place to do the
+        same thing, out of sight of the numbers.
+        """
+        if is_active:
+            dot = DotView.alloc().initWithFrame_(NSMakeRect(20, y + ROW_HEIGHT / 2 - 4, 8, 8))
+            group.addSubview_(dot)
+
+        name = _label(account.email, 13.0)
+        name.sizeToFit()
+        frame = name.frame()
+        name.setFrame_(NSMakeRect(40, y + (ROW_HEIGHT - frame.size.height) / 2,
+                                  frame.size.width, frame.size.height))
+        group.addSubview_(name)
 
         plan = account.subscription_type or ""
         if plan:
             width = pill_width(plan)
             pill = PillView.alloc().initWithFrame_text_(
-                NSMakeRect(24 + frame.width, y + ROW_HEIGHT / 2 - 8, width, 16), plan
+                NSMakeRect(48 + frame.size.width, y + ROW_HEIGHT / 2 - 8, width, 16), plan
             )
             group.addSubview_(pill)
 
@@ -269,7 +235,7 @@ class AccountsWindowController:
         button = AppKit.NSButton.alloc().initWithFrame_(
             NSMakeRect(right - 48, y + ROW_HEIGHT / 2 - 11, 30, 22)
         )
-        button.setTitle_("⋯")
+        button.setTitle_("\u22EF")
         button.setBordered_(False)
         button.setFont_(AppKit.NSFont.systemFontOfSize_(15.0))
         button.setTarget_(actions)
