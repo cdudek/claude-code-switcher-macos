@@ -10,23 +10,41 @@ class UsageWindow:
     resets_in: str | None = None
 
 
-FULL, EMPTY = "\u2588", "\u2591"
+# Colour by how much room is left, not by decoration. A menu item's title is
+# plain text - rumps offers no attributed string - so the only colour available
+# is in the glyphs themselves, and emoji squares are the only coloured glyphs
+# that render at menu size on every macOS version.
+CALM = "\U0001F7E9"      # green, plenty of room
+WATCH = "\U0001F7E8"     # yellow, past half
+CLOSE = "\U0001F7E7"     # orange, running out
+SPENT = "\U0001F7E5"     # red, nearly gone or gone
+
+BANDS = ((50.0, CALM), (75.0, WATCH), (90.0, CLOSE))
+
+
+def band(percent: float) -> str:
+    """The colour for a utilisation figure."""
+    for ceiling, glyph in BANDS:
+        if percent < ceiling:
+            return glyph
+    return SPENT
 
 
 def meter(percent: float, cells: int = 10) -> str:
-    """A fixed-width bar. Both glyphs are the same width, so rows line up.
+    """A bar of coloured squares. Length is the figure, colour is the urgency.
 
-    Any non-zero reading gets at least one cell, so 1% does not look like 0%.
-    A full bar is reserved for 100 and over, so a nearly-spent window is still
-    visibly short of the end - that difference is the one worth seeing.
+    No empty track. An unfilled cell would have to be a white or black square
+    and one of those disappears into the menu background - the menu follows the
+    system theme and the app cannot ask which one is in use. Length alone
+    carries the reading, so the row puts the percentage first and lets the bar
+    run off to the right where a ragged edge costs nothing.
+
+    Any non-zero reading gets at least one square, so 1% does not read as 0%.
     """
     if percent <= 0:
-        filled = 0
-    elif percent >= 100:
-        filled = cells
-    else:
-        filled = max(1, int(percent * cells // 100))
-    return FULL * filled + EMPTY * (cells - filled)
+        return ""
+    filled = cells if percent >= 100 else max(1, int(percent * cells // 100))
+    return band(percent) * filled
 
 
 @dataclass(frozen=True)
@@ -63,8 +81,9 @@ def usage_rows(state: "UsageState", width: int = 10) -> tuple[str, str]:
     """
     if state.available and state.windows:
         rows = [
-            f"{w.label:<3}{meter(w.percent, width)}  {w.percent:>3.0f}%"
-            + (f"   resets in {w.resets_in}" if w.resets_in else "")
+            f"{w.label:<3}{w.percent:>3.0f}%  "
+            + (f"resets in {w.resets_in:<8}" if w.resets_in else " " * 19)
+            + meter(w.percent, width)
             for w in state.windows[:2]
         ]
         while len(rows) < 2:

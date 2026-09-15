@@ -11,9 +11,10 @@ how often does the five-hour window reset, and where does the spend actually go.
 from __future__ import annotations
 
 import html
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from code_agent_switcher import usage_log
 from code_agent_switcher.ledger import (
     assumed_models,
     rate_for,
@@ -22,7 +23,10 @@ from code_agent_switcher.ledger import (
     Window,
     by_day,
     by_model,
+    by_hour,
     by_provider,
+    by_weekday,
+    tokens_between,
     session_windows,
     unpriced_models,
     windows_per_day,
@@ -160,6 +164,71 @@ def _totals_table(groups: dict[str, Totals], heading: str) -> str:
 <tbody>{"".join(rows)}</tbody></table>"""
 
 
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _profile(buckets: dict, labels, heading: str, note_col: str) -> str:
+    """A simple ranked profile: one row per bucket, bar scaled to the biggest."""
+    scale = max((t.billable for t in buckets.values()), default=0)
+    rows = []
+    for key, t in buckets.items():
+        rows.append(f"""<tr>
+<th scope=row>{labels(key)}</th>
+<td class=bars>{_stack([("tokens", t.billable, TEAL)], scale)}</td>
+<td class=num>{_tokens(t.billable) if t.billable else "&ndash;"}</td>
+<td class=num>{_n(t.messages) if t.messages else "&ndash;"}</td>
+<td class="num money">{_money(t.dollars) if t.dollars else "&ndash;"}</td>
+</tr>""")
+    return f"""<table>
+<thead><tr><th scope=col>{heading}</th><th scope=col>{note_col}</th>
+<th scope=col class=num>Tokens</th><th scope=col class=num>Msgs</th>
+<th scope=col class=num>Est. cost</th></tr></thead>
+<tbody>{"".join(rows)}</tbody></table>"""
+
+
+def _budget_section(records: list[Record], samples: list) -> str:
+    """What a percentage point of each limit window actually buys.
+
+    Pairs every rise in the reported percentage with the tokens spent in that
+    interval. Only the account that was active can have spent them, so only
+    active steps count.
+    """
+    if not samples:
+        return ("<p class=empty>No readings yet. The app records one every five "
+                "minutes it is running; come back in a day and this fills in.</p>")
+    steps = [s for s in usage_log.steps(samples)]
+    rows = []
+    grouped: dict[tuple[str, str, str], list] = {}
+    for step in steps:
+        grouped.setdefault((step.account, step.plan, step.label), []).append(step)
+    for (account, plan, label), group in sorted(grouped.items()):
+        percent = sum(g.delta_percent for g in group)
+        tokens = sum(
+            tokens_between(records, g.at - timedelta(minutes=g.minutes), g.at)
+            for g in group
+        )
+        if percent <= 0:
+            continue
+        per_point = tokens / percent
+        rows.append(f"""<tr>
+<th scope=row>{html.escape(account)}</th>
+<td>{html.escape(plan)}</td>
+<td>{html.escape(label)}</td>
+<td class=num>{len(group)}</td>
+<td class=num>{percent:.1f}%</td>
+<td class=num>{_tokens(int(per_point))}</td>
+<td class=num>{_tokens(int(per_point * 100))}</td>
+</tr>""")
+    if not rows:
+        return ("<p class=empty>Readings are being collected but none of them rose yet - "
+                "a rise between two consecutive readings is what makes this measurable.</p>")
+    return f"""<table>
+<thead><tr><th scope=col>Account</th><th scope=col>Plan</th><th scope=col>Window</th>
+<th scope=col class=num>Steps</th><th scope=col class=num>Observed</th>
+<th scope=col class=num>Per 1%</th><th scope=col class=num>Full window</th></tr></thead>
+<tbody>{"".join(rows)}</tbody></table>"""
+
+
 CSS = """
 :root {
   --ink:#241F2C; --muted:#6E687A; --line:#E2DEE6; --ground:#FBF9F7;
@@ -210,6 +279,7 @@ code { font:12px/1 ui-monospace, SFMono-Regular, Menlo, monospace }
 
 def render(records: list[Record], generated: datetime | None = None) -> str:
     generated = generated or datetime.now().astimezone()
+    samples = usage_log.load()
     windows = session_windows(records)
     days = by_day(records)
     per_day = windows_per_day(windows)
@@ -287,6 +357,25 @@ this is read from your own transcripts, not from them.</p>
 <p class=note>Active is the span from the first message in the window to the last, not
 the full five hours. A short span with a big number is a burst; a long span means the
 window was open most of its life.</p>
+
+<h2>Time of day</h2>
+<div class=wrap>{_profile(by_hour(records), lambda h: f"{h:02d}:00", "Hour", "Tokens by hour")}</div>
+<p class=note>Local time. This is when you work, not a statement about what the
+limits do; pair it with the window table above to see whether a heavy hour is
+also where a window runs out.</p>
+
+<h2>By weekday</h2>
+<div class=wrap>{_profile(by_weekday(records), lambda d: WEEKDAYS[d], "Day", "Tokens by weekday")}</div>
+
+<h2>Observed budget</h2>
+<div class=wrap>{_budget_section(records, samples)}</div>
+<p class=note>Per 1% is the tokens spent while the reported figure rose one point,
+so Full window is what the whole allowance is worth at the rate you are actually
+using it. Different accounts and plans land differently, and the same account can
+land differently at different times - that difference is the point of the table.
+It needs the app running to collect readings, and the transcripts carry no account
+attribution of their own, so the history before this version cannot be split by
+account.</p>
 
 <h2>By model</h2>
 <div class=wrap>{_totals_table(models, "Model")}</div>

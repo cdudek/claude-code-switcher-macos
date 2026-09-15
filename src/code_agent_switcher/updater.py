@@ -206,6 +206,62 @@ def _require_launchable(app: Path) -> None:
         raise ValueError(f"the update's {name} is not executable - the archive unpacked wrong")
 
 
+_SKIP_SECTIONS = ("install", "installation", "download")
+
+
+def plain_notes(markdown: str, limit: int = 420) -> str:
+    """Turn a release body into something an alert can show.
+
+    NSAlert renders plain text, and rumps gives no way to pass an attributed
+    string, so the raw body arrived in the dialog with its `##`, its `**` and a
+    whole fenced shell block intact, cut off mid-sentence. This keeps the part
+    an existing user needs - what changed - and drops the part they do not: how
+    to install an app they already have.
+    """
+    if not markdown:
+        return ""
+    lines: list[str] = []
+    in_fence = False
+    skipping = False
+    for raw in markdown.splitlines():
+        line = raw.rstrip()
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if line.lstrip().startswith("#"):
+            heading = line.lstrip("# ").strip().lower()
+            skipping = any(heading.startswith(word) for word in _SKIP_SECTIONS)
+            continue
+        if skipping:
+            continue
+        lines.append(_strip_marks(line))
+
+    text = "\n".join(lines)
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    # Cut at the last sentence or line that fits, never mid-word.
+    cut = text[:limit]
+    for boundary in ("\n", ". "):
+        at = cut.rfind(boundary)
+        if at > limit // 2:
+            return cut[: at + len(boundary)].strip() + "\u2026"
+    return cut.rsplit(" ", 1)[0].strip() + "\u2026"
+
+
+def _strip_marks(line: str) -> str:
+    """Remove the markdown that a plain-text alert cannot render."""
+    line = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line)     # links keep their text
+    line = re.sub(r"`([^`]*)`", r"\1", line)                  # inline code
+    line = re.sub(r"\*\*([^*]+)\*\*", r"\1", line)             # bold
+    line = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", line)    # italic
+    return line
+
+
 def swap_script(staged_app: Path, target: Path, backup: Path, log: Path, pid: int) -> str:
     """The script that replaces the app once this process has exited.
 

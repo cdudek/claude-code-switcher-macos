@@ -347,3 +347,29 @@ def unpriced_models(records: Iterable[Record]) -> list[str]:
 
 def since_days(days: int) -> date:
     return (datetime.now(timezone.utc).astimezone() - timedelta(days=days - 1)).date()
+
+
+def by_hour(records: Iterable[Record]) -> dict[int, Totals]:
+    """Local hour of day, 0-23. Every hour present, so the shape is readable."""
+    out = {hour: Totals() for hour in range(24)}
+    for r in records:
+        out[r.at.astimezone().hour].add(r)
+    return out
+
+
+def by_weekday(records: Iterable[Record]) -> dict[int, Totals]:
+    """Monday is 0. Every day present."""
+    out = {day: Totals() for day in range(7)}
+    for r in records:
+        out[r.at.astimezone().weekday()].add(r)
+    return out
+
+
+def tokens_between(records: list[Record], start: datetime, end: datetime) -> int:
+    """Billable tokens in a half-open interval. `records` must be sorted by time."""
+    import bisect
+
+    times = [r.at for r in records]
+    lo = bisect.bisect_left(times, start)
+    hi = bisect.bisect_left(times, end)
+    return sum(r.billable for r in records[lo:hi])

@@ -53,6 +53,7 @@ from code_agent_switcher.usage import fetch_usage_detail_for_account, fetch_acti
 from code_agent_switcher.usage_state import ROW_INDENT, UsageState, usage_rows
 from code_agent_switcher.ledger import load_records, since_days
 from code_agent_switcher.report import write_report
+from code_agent_switcher import usage_log
 
 # A month is long enough to see a trend and short enough to read in a few
 # seconds; the whole transcript tree here is 1.3 GB.
@@ -262,8 +263,9 @@ class ClaudeSwitcherApp(rumps.App):
 
     def _offer_update(self, version: str, url: str, notes: str) -> None:
         body = f"Code Agent Switcher {version} is available. You have {updater.current_version()}."
-        if notes.strip():
-            body += "\n\n" + notes.strip()[:600]
+        summary = updater.plain_notes(notes)
+        if summary:
+            body += "\n\n" + summary
         body += "\n\nInstalling replaces the app and restarts it. The version you have now goes to the Trash."
         if rumps.alert(title="Update available", message=body,
                        ok="Install and restart", cancel="Later") != ALERT_OK:
@@ -583,9 +585,19 @@ class ClaudeSwitcherApp(rumps.App):
             try:
                 for account in accounts:
                     key = account_key(account)
-                    state = self._fetch_usage_state(account, active_by_provider.get(account.provider))
+                    active = active_by_provider.get(account.provider)
+                    state = self._fetch_usage_state(account, active)
                     self._usage_state_cache[key] = state
                     self._usage_cache[key] = usage_rows(state)
+                    # Every poll is thrown away otherwise, and the series is the
+                    # only place the real budget per account can be read from.
+                    usage_log.record(
+                        provider=account.provider,
+                        account=account.email,
+                        plan=account.subscription_type or "",
+                        active=bool(active and active.email == account.email),
+                        state=state,
+                    )
 
                 for provider in ("claude", "codex"):
                     result = self._attempt_auto_switch(provider)

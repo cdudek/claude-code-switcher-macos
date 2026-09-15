@@ -21,6 +21,10 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The release notes are built from `git log <prev tag>..<tag>`, which
+          # a shallow clone cannot answer.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -61,6 +65,17 @@ jobs:
         id: package
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          if [ -n "$PREV" ]; then
+            CHANGES=$(git log --no-merges --format='- %s' "$PREV..$TAG")
+          else
+            CHANGES=$(git log --no-merges --format='- %s' -5 "$TAG")
+          fi
+          {
+            echo "changes<<CHANGESEOF"
+            echo "$CHANGES"
+            echo "CHANGESEOF"
+          } >> "$GITHUB_OUTPUT"
           ZIP="Code-Agent-Switcher-$TAG.zip"
           DMG="Code-Agent-Switcher-$TAG.dmg"
           # ditto keeps the bundle's symlinks and resource forks; `zip` does not.
@@ -82,6 +97,10 @@ jobs:
             ${{ steps.package.outputs.zip }}
           fail_on_unmatched_files: true
           body: |
+            ## What changed
+
+            ${{ steps.package.outputs.changes }}
+
             ## Install
 
             Download the **.dmg** and drag Code Agent Switcher into Applications.
