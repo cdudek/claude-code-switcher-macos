@@ -36,6 +36,14 @@ class TestConnectedReading:
         assert connected(rows) == ("Asana",)
         assert rows[0].erroring is True
 
+    def test_disconnected_is_not_connected(self, monkeypatch):
+        """Seen live after a failed auth knocked a working connector off. The
+        word contains "connected", so a substring test would count it as usable
+        and the card would promise a connector that is gone."""
+        _stub(monkeypatch, _payload(("Linear", "disconnected")))
+        rows, _ = connectors.fetch_connectors("svc")
+        assert connected(rows) == ()
+
     def test_order_follows_the_api(self, monkeypatch):
         _stub(monkeypatch, _payload(("Slack", "connected"), ("Linear", "connected")))
         rows, _ = connectors.fetch_connectors("svc")
