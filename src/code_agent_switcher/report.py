@@ -266,46 +266,79 @@ def _budget_section(records: list[Record], samples: list) -> str:
 <tbody>{"".join(rows)}</tbody></table>"""
 
 
-def _rate_by_hour_section(records: list[Record], samples: list, label: str) -> str:
-    """Does a percentage point buy fewer tokens at some hours than others?
-
-    Same arithmetic as the budget table, bucketed by the local hour the rise was
-    observed in. If the allowance is metered the same way all day, the column is
-    flat; if it is not, this is where it shows.
-    """
-    buckets: dict[int, list[float]] = {}
+def _hourly_rates(records: list[Record], samples: list) -> dict[tuple[int, str], tuple]:
+    """Tokens per 1%, bucketed by the local hour the rise was observed in."""
+    buckets: dict[tuple[int, str], list] = {}
     for step in usage_log.steps(samples):
-        if step.label != label:
-            continue
         spent = tokens_between_for(
             records, step.at - timedelta(minutes=step.minutes), step.at, step.provider
         )
-        hour = step.at.astimezone().hour
-        entry = buckets.setdefault(hour, [0.0, 0.0, 0])
+        key = (step.at.astimezone().hour, step.label)
+        entry = buckets.setdefault(key, [0.0, 0.0, 0])
         entry[0] += spent
         entry[1] += step.delta_percent
         entry[2] += 1
-    usable = {h: v for h, v in buckets.items() if v[1] > 0}
-    if not usable:
-        return ("<p class=empty>Not enough readings yet to compare hours. This "
-                "needs rises observed at several times of day.</p>")
-    scale = max(v[0] / v[1] for v in usable.values())
+    return {
+        key: (spent / percent if spent else None, percent, count)
+        for key, (spent, percent, count) in buckets.items()
+        if percent > 0
+    }
+
+
+def _rate_by_hour_section(records: list[Record], samples: list, labels) -> str:
+    """Does a percentage point buy fewer tokens at some hours than others?
+
+    Every hour of the day gets a row, including the ones with nothing in them.
+    Printing only the hours that have readings made five hours of data look like
+    a finished picture of the day, which is the opposite of what it is.
+    """
+    rates = _hourly_rates(records, samples)
+    if not rates:
+        return ("<p class=empty>Not enough readings yet. This needs rises "
+                "observed while an account was in use, at several times of day.</p>")
+    primary = labels[0]
+    scale = max(
+        (value[0] for (hour, label), value in rates.items()
+         if label == primary and value[0]),
+        default=0,
+    )
     rows = []
-    for hour in sorted(usable):
-        spent, percent, count = usable[hour]
-        per_point = spent / percent
-        rows.append(f"""<tr>
+    for hour in range(24):
+        cells = []
+        for label in labels:
+            value = rates.get((hour, label))
+            if not value or value[0] is None:
+                cells.append("<td class=num>&ndash;</td>")
+            else:
+                cells.append(f"<td class=num>{_tokens(int(value[0]))}</td>")
+        steps = sum(rates.get((hour, label), (None, 0.0, 0))[2] for label in labels)
+        seen = sum(rates.get((hour, label), (None, 0.0, 0))[1] for label in labels)
+        main = rates.get((hour, primary))
+        bar = (
+            _stack([("tokens per 1%", int(main[0]), SAND)], int(scale))
+            if main and main[0] and scale
+            else '<div class="bar"></div>'
+        )
+        blank = "" if steps else " class=quiet"
+        rows.append(f"""<tr{blank}>
 <th scope=row>{hour:02d}:00</th>
-<td class=bars>{_stack([("tokens per 1%", int(per_point), SAND)], int(scale))}</td>
-<td class=num>{_tokens(int(per_point))}</td>
-<td class=num>{percent:.0f}%</td>
-<td class=num>{count}</td>
+<td class=bars>{bar}</td>
+{"".join(cells)}
+<td class=num>{seen:.0f}%</td>
+<td class=num>{steps or "&ndash;"}</td>
 </tr>""")
-    return f"""<table>
-<thead><tr><th scope=col>Hour</th><th scope=col>Tokens per 1% of the {html.escape(label)} window</th>
-<th scope=col class=num>Per 1%</th><th scope=col class=num>Observed</th>
+    covered = len({hour for (hour, _label) in rates})
+    heads = "".join(
+        f'<th scope=col class=num>Per 1% of {html.escape(label)}</th>' for label in labels
+    )
+    return f"""<p class=note>Readings so far cover <b>{covered} of 24 hours</b>.
+An hour with no row filled in has had no measurable rise yet, not a cheap one.</p>
+<div class=wrap><table>
+<thead><tr><th scope=col>Hour</th>
+<th scope=col>Tokens per 1% of the {html.escape(primary)} window</th>
+{heads}<th scope=col class=num>Observed</th>
 <th scope=col class=num>Steps</th></tr></thead>
-<tbody>{"".join(rows)}</tbody></table>"""
+<tbody>{"".join(rows)}</tbody></table></div>"""
 
 
 CSS = """
@@ -353,6 +386,7 @@ code { font:12px/1 ui-monospace, SFMono-Regular, Menlo, monospace }
   border-radius:4px; padding:1px 5px; margin-left:6px }
 .note { color:var(--muted); font-size:12.5px; margin:10px 2px 0 }
 .empty { color:var(--muted) }
+tr.quiet th, tr.quiet td { opacity:0.45 }
 """
 
 
@@ -462,16 +496,18 @@ transcripts carry no account attribution, so only readings taken from this
 version onwards can be split by account.</p>
 
 <h2>What a percentage point buys, by hour</h2>
-<div class=wrap>{_rate_by_hour_section(records, samples, "5h")}</div>
+{_rate_by_hour_section(records, samples, ("5h", "7d", "1h"))}
 <p class=note>The same arithmetic as the table above, bucketed by the local hour
 the rise was observed in. A flat column means the allowance is metered the same
 way all day. It is not a measure of how hard you worked at that hour - that is
 the Time of day table - it is how much work one point of the window paid for.</p>
 
-<h2>By project</h2>
-<div class=wrap>{_totals_table(by_project(records), "Project")}</div>
-<p class=note>The working directory each message was sent from, which both
-agents record, so nothing has to be tagged by hand.</p>
+<h2>By repository</h2>
+<div class=wrap>{_totals_table(by_project(records), "Repository")}</div>
+<p class=note>The repository the working directory belongs to, which both agents
+record, so nothing has to be tagged by hand. A worktree counts towards its own
+repository. <b>Other</b> is every message sent from a directory with no
+repository above it - a scratchpad, a temp folder, a loose experiment.</p>
 
 <h2>By model</h2>
 <div class=wrap>{_totals_table(models, "Model")}</div>

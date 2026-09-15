@@ -245,15 +245,47 @@ class TestProjectAttribution:
     """Both agents record the working directory, so the spend can be split by
     repository without anyone tagging anything."""
 
-    def test_claude_records_carry_the_project(self, tmp_path):
-        (tmp_path / "a.jsonl").write_text(json.dumps({
+    @staticmethod
+    def _repo(root, name):
+        repo = root / name
+        (repo / ".git").mkdir(parents=True)
+        return repo
+
+    def _project_of(self, tmp_path, cwd):
+        from code_agent_switcher import ledger
+        ledger._repo_name.cache_clear()
+        (tmp_path / "t" ).mkdir(exist_ok=True)
+        (tmp_path / "t" / "a.jsonl").write_text(json.dumps({
             "timestamp": "2026-09-01T09:00:00.000Z",
-            "cwd": "/Users/x/projects/omr/omr-leadhub",
+            "cwd": str(cwd),
             "message": {"id": "m1", "model": "claude-opus-5",
                         "usage": {"output_tokens": 5}},
         }) + "\n")
-        [r] = list(claude_records(root=tmp_path))
-        assert r.project == "omr-leadhub"
+        [r] = list(claude_records(root=tmp_path / "t"))
+        return r.project
+
+    def test_claude_records_carry_the_repository(self, tmp_path):
+        repo = self._repo(tmp_path, "omr-leadhub")
+        assert self._project_of(tmp_path, repo) == "omr-leadhub"
+
+    def test_a_subdirectory_reports_the_repository_not_itself(self, tmp_path):
+        repo = self._repo(tmp_path, "omr-leadhub")
+        (repo / "src" / "web").mkdir(parents=True)
+        assert self._project_of(tmp_path, repo / "src" / "web") == "omr-leadhub"
+
+    def test_a_worktree_is_folded_into_its_repository(self, tmp_path):
+        """A worktree at <repo>/.worktrees/<branch> is work on that repo. Naming
+        it by the branch scattered one repository across a row per branch."""
+        repo = self._repo(tmp_path, "omr-leadhub")
+        tree = repo / ".worktrees" / "screens-sanity"
+        tree.mkdir(parents=True)
+        (tree / ".git").write_text("gitdir: ../../.git/worktrees/screens-sanity\n")
+        assert self._project_of(tmp_path, tree) == "omr-leadhub"
+
+    def test_a_directory_under_no_repository_is_left_unassigned(self, tmp_path):
+        loose = tmp_path / "observer-sessions"
+        loose.mkdir()
+        assert self._project_of(tmp_path, loose) == ""
 
     def test_a_record_with_no_cwd_is_not_fatal(self, tmp_path):
         (tmp_path / "a.jsonl").write_text(_claude_line("m1", "2026-09-01T09:00:00.000Z"))
@@ -270,8 +302,8 @@ class TestProjectAttribution:
         assert list(grouped) == ["big", "small"]
         assert grouped["small"].messages == 2
 
-    def test_records_with_no_project_are_named_not_dropped(self):
-        assert list(by_project([_rec(0)])) == ["(unknown)"]
+    def test_records_with_no_repository_are_named_not_dropped(self):
+        assert list(by_project([_rec(0)])) == ["Other"]
 
 
 class TestProviderScopedTokens:
@@ -283,3 +315,42 @@ class TestProviderScopedTokens:
         start, end = T0 - timedelta(minutes=1), T0 + timedelta(minutes=5)
         assert tokens_between_for(records, start, end, "codex") == 900
         assert tokens_between_for(records, start, end, "claude") == 100
+
+
+class TestHourlyRateSection:
+    """Printing only the hours that have readings made five hours of data look
+    like a finished picture of the day."""
+
+    def _page(self, samples):
+        from code_agent_switcher.report import _rate_by_hour_section
+        return _rate_by_hour_section([_rec(0, out=1_000_000)], samples, ("5h", "7d"))
+
+    def _samples(self, tmp_path, hours):
+        from code_agent_switcher import usage_log
+        from code_agent_switcher.usage_state import UsageState, UsageWindow
+        p = tmp_path / "s.jsonl"
+        for hour in hours:
+            base = T0.replace(hour=hour, minute=0)
+            for i, pct in enumerate((10.0, 12.0)):
+                usage_log.record(
+                    "claude", "a@b.c", "team", True,
+                    UsageState(True, "x", (UsageWindow("5h", pct),)),
+                    path=p, now=base + timedelta(minutes=i * 5),
+                )
+        return usage_log.load(p)
+
+    def test_every_hour_of_the_day_gets_a_row(self, tmp_path):
+        page = self._page(self._samples(tmp_path, [9]))
+        for hour in range(24):
+            assert f"{hour:02d}:00" in page
+
+    def test_the_covered_count_is_stated(self, tmp_path):
+        assert "1 of 24 hours" in self._page(self._samples(tmp_path, [9]))
+        assert "3 of 24 hours" in self._page(self._samples(tmp_path, [9, 14, 20]))
+
+    def test_an_hour_with_no_reading_is_dimmed_not_hidden(self, tmp_path):
+        page = self._page(self._samples(tmp_path, [9]))
+        assert "class=quiet" in page
+
+    def test_no_readings_at_all_says_so(self):
+        assert "Not enough readings" in self._page([])

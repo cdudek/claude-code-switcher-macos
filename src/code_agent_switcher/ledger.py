@@ -24,6 +24,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -276,12 +277,35 @@ def codex_records(since: date | None = None, root: Path = CODEX_SESSIONS) -> Ite
                 )
 
 
+@lru_cache(maxsize=4096)
+def _repo_name(cwd: str) -> str:
+    """The repository a directory belongs to, or "" when it belongs to none.
+
+    The last path component was the wrong unit. A worktree at
+    `<repo>/.worktrees/<branch>` reported the branch as its own project, a
+    scratchpad under /private/tmp reported "scratchpad", and a subdirectory of
+    a repo reported the subdirectory - so one repository was scattered across
+    several rows and rows appeared that are not repositories at all.
+
+    A worktree is folded back into its repository by name, because the work in
+    it is work on that repository. Anything with no `.git` above it is not
+    assigned; the caller files those together rather than inventing a project.
+    """
+    path = Path(cwd)
+    parts = path.parts
+    if ".worktrees" in parts:
+        path = Path(*parts[: parts.index(".worktrees")])
+    for directory in (path, *path.parents):
+        if (directory / ".git").exists():
+            return directory.name
+    return ""
+
+
 def _project_name(cwd) -> str:
-    """The last path component. A full path is noise in a table and carries
-    more of someone's filesystem than a report needs."""
+    """The repository name for a working directory."""
     if not isinstance(cwd, str) or not cwd:
         return ""
-    return Path(cwd).name or cwd
+    return _repo_name(cwd)
 
 
 def _find_key(payload, key: str) -> str | None:
@@ -409,7 +433,7 @@ def by_project(records: Iterable[Record]) -> dict[str, Totals]:
     """Spend per working directory, biggest first."""
     out: dict[str, Totals] = {}
     for r in records:
-        out.setdefault(r.project or "(unknown)", Totals()).add(r)
+        out.setdefault(r.project or "Other", Totals()).add(r)
     return dict(sorted(out.items(), key=lambda kv: -kv[1].dollars))
 
 
