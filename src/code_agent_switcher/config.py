@@ -139,6 +139,40 @@ def remove_account(email: str, path: Path = DEFAULT_CONFIG_PATH, provider: str =
     save_accounts(accounts, path)
 
 
+# Work plans first, then personal, then whatever we do not recognise. The app
+# shows both providers' lists in two places and they must agree.
+PLAN_RANK = {"enterprise": 0, "team": 1, "max": 2, "pro": 3, "free": 4}
+UNKNOWN_PLAN_RANK = 5
+
+
+def plan_rank(subscription_type: str | None) -> int:
+    return PLAN_RANK.get((subscription_type or "").strip().lower(), UNKNOWN_PLAN_RANK)
+
+
+def sort_accounts(accounts: list[AccountInfo]) -> list[AccountInfo]:
+    """A stable order: work plans first, and one email's accounts kept together.
+
+    The list used to come back in config order, which changes every time an
+    account is switched or re-added - so the row you were about to click moved.
+    Sorting on the email's BEST plan rather than each row's own keeps a personal
+    and a team seat on the same address adjacent instead of splitting them
+    across the two tiers.
+    """
+    best_for_email: dict[str, int] = {}
+    for account in accounts:
+        rank = plan_rank(account.subscription_type)
+        email = account.email.lower()
+        best_for_email[email] = min(best_for_email.get(email, UNKNOWN_PLAN_RANK), rank)
+    return sorted(
+        accounts,
+        key=lambda a: (
+            best_for_email[a.email.lower()],
+            a.email.lower(),
+            plan_rank(a.subscription_type),
+        ),
+    )
+
+
 def get_active_account(
     path: Path = DEFAULT_CONFIG_PATH, provider: str = "claude"
 ) -> AccountInfo | None:

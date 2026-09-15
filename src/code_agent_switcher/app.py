@@ -35,6 +35,7 @@ from code_agent_switcher.config import (
     get_active_account,
     set_active_account,
     load_settings,
+    sort_accounts,
     set_auto_switch_enabled,
     set_auto_update,
     DEFAULT_CONFIG_PATH,
@@ -213,7 +214,7 @@ class ClaudeSwitcherApp(rumps.App):
 
     def _rebuild_menu(self):
         """Draw the panel: a reading at the top, the controls under it."""
-        accounts = load_accounts(self.config_path)
+        accounts = sort_accounts(load_accounts(self.config_path))
         self.menu.clear()
         self._usage_items = {}
         self._card_meta = {}
@@ -237,7 +238,7 @@ class ClaudeSwitcherApp(rumps.App):
                 item = ui.menu_item_with_view(self._card_for(key))
                 nsmenu.addItem_(item)
                 self._usage_items[key] = item
-            nsmenu.addItem_(ui.menu_item_with_view(ui.spacer()))
+            nsmenu.addItem_(ui.menu_item_with_view(ui.spacer(2)))
 
         if not accounts:
             nsmenu.addItem_(ui.menu_item_with_view(
@@ -270,7 +271,7 @@ class ClaudeSwitcherApp(rumps.App):
         """Build one account card from the cached reading."""
         email, plan, active = self._card_meta.get(key, ("", "", False))
         state = self._usage_state_cache.get(key)
-        return ui.account_card(
+        return ui.card_row(
             email, plan, active,
             ui.rows_for(state) if state else [],
             reason=getattr(state, "reason", None) if state else "reading\u2026",
@@ -303,14 +304,14 @@ class ClaudeSwitcherApp(rumps.App):
 
     def _show_accounts_window(self):
         self._accounts_window.show(
-            load_accounts(self.config_path),
+            sort_accounts(load_accounts(self.config_path)),
             {p: self._live_active_email(p) for p in ("claude", "codex")},
             updater.current_version(),
         )
 
     def _refresh_accounts_window(self):
         self._accounts_window.rebuild(
-            load_accounts(self.config_path),
+            sort_accounts(load_accounts(self.config_path)),
             {p: self._live_active_email(p) for p in ("claude", "codex")},
             updater.current_version(),
         )

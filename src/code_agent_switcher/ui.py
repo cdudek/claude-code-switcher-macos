@@ -157,6 +157,10 @@ def pill_width(text: str) -> float:
 CARD_TOP = 34.0
 ROW_HEIGHT = 22.0
 CARD_BOTTOM = 8.0
+# The menu lays a view-based item out at x=0 across the full width, so the
+# card's own inset was thrown away and every card ran edge to edge. It sits in
+# a full-width wrapper now, which is what carries the side padding and the gap.
+CARD_GAP = 8.0
 
 
 def account_card(email: str, plan: str, active: bool, rows, reason: str | None = None) -> AppKit.NSView:
@@ -293,3 +297,15 @@ def set_symbol(item, name: str) -> None:
         item._menuitem.setImage_(image)
     except AttributeError:
         pass
+
+
+def card_row(email: str, plan: str, active: bool, rows, reason: str | None = None) -> AppKit.NSView:
+    """A card in a full-width wrapper: side padding, and a gap below it."""
+    card = account_card(email, plan, active, rows, reason)
+    height = card.frame().size.height
+    wrapper = AppKit.NSView.alloc().initWithFrame_(
+        NSMakeRect(0, 0, PANEL_WIDTH, height + CARD_GAP)
+    )
+    card.setFrame_(NSMakeRect(PAD, CARD_GAP, PANEL_WIDTH - 2 * PAD, height))
+    wrapper.addSubview_(card)
+    return wrapper

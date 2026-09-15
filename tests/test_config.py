@@ -199,3 +199,67 @@ class TestSettings:
         set_auto_switch_enabled("claude", True, path)
         save_accounts([AccountInfo("a@test.com", "pro", "", True, "u")], path)
         assert is_auto_switch_enabled("claude", path) is True
+
+
+from code_agent_switcher.config import plan_rank, sort_accounts
+
+
+def _acct(email, plan, provider="claude"):
+    return AccountInfo(email, plan, "", False, email, provider=provider)
+
+
+class TestAccountOrder:
+    """The list is rebuilt after every switch; config order moves rows under
+    the cursor, so the order has to come from the accounts themselves."""
+
+    def test_work_plans_come_before_personal(self):
+        rows = sort_accounts([_acct("b@x.com", "max"), _acct("a@x.com", "team")])
+        assert [a.email for a in rows] == ["a@x.com", "b@x.com"]
+
+    def test_enterprise_outranks_team(self):
+        rows = sort_accounts([_acct("b@x.com", "team"), _acct("a@x.com", "enterprise")])
+        assert [a.email for a in rows] == ["a@x.com", "b@x.com"]
+
+    def test_one_email_keeps_its_accounts_together(self):
+        """A personal and a team seat on the same address must not be split
+        across the two tiers."""
+        rows = sort_accounts([
+            _acct("same@x.com", "max"),
+            _acct("other@x.com", "team"),
+            _acct("same@x.com", "team"),
+        ])
+        assert [(a.email, a.subscription_type) for a in rows] == [
+            ("other@x.com", "team"),
+            ("same@x.com", "team"),
+            ("same@x.com", "max"),
+        ]
+
+    def test_grouping_survives_an_alphabet_that_would_split_it(self):
+        """Ranking each row on its own plan puts alpha/max between zed's two
+        seats. The group has to be ranked by the email's best plan."""
+        rows = sort_accounts([
+            _acct("zed@x.com", "team"),
+            _acct("alpha@x.com", "max"),
+            _acct("zed@x.com", "max"),
+        ])
+        assert [(a.email, a.subscription_type) for a in rows] == [
+            ("zed@x.com", "team"),
+            ("zed@x.com", "max"),
+            ("alpha@x.com", "max"),
+        ]
+
+    def test_within_an_email_the_better_plan_comes_first(self):
+        rows = sort_accounts([_acct("a@x.com", "pro"), _acct("a@x.com", "team")])
+        assert [a.subscription_type for a in rows] == ["team", "pro"]
+
+    def test_an_unknown_plan_sorts_last(self):
+        rows = sort_accounts([_acct("b@x.com", "mystery"), _acct("a@x.com", "free")])
+        assert [a.email for a in rows] == ["a@x.com", "b@x.com"]
+
+    def test_the_order_does_not_depend_on_the_input_order(self):
+        rows = [_acct("b@x.com", "max"), _acct("a@x.com", "team"), _acct("c@x.com", "pro")]
+        assert [a.email for a in sort_accounts(rows)] == \
+               [a.email for a in sort_accounts(list(reversed(rows)))]
+
+    def test_plan_rank_is_case_and_space_insensitive(self):
+        assert plan_rank("  Team ") == plan_rank("team")

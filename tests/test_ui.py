@@ -94,3 +94,25 @@ class TestMenuSymbols:
         item = rumps.MenuItem("Manage accounts")
         ui.set_symbol(item, "not.a.real.symbol.name")
         assert item._menuitem.image() is None
+
+
+class TestCardPadding:
+    """The menu lays a view-based item out at x=0 across the full width, so a
+    card's own inset is discarded. The wrapper is what carries the padding."""
+
+    def _wrapper(self):
+        return ui.card_row("a@b.c", "team", False, [("5h", 10.0, None)])
+
+    def test_the_wrapper_fills_the_panel(self):
+        assert self._wrapper().frame().size.width == ui.PANEL_WIDTH
+
+    def test_the_card_is_inset_on_both_sides(self):
+        card = self._wrapper().subviews()[0]
+        assert card.frame().origin.x == ui.PAD
+        assert card.frame().size.width == ui.PANEL_WIDTH - 2 * ui.PAD
+
+    def test_there_is_a_gap_below_each_card(self):
+        wrapper = self._wrapper()
+        card = wrapper.subviews()[0]
+        assert card.frame().origin.y == ui.CARD_GAP
+        assert wrapper.frame().size.height == card.frame().size.height + ui.CARD_GAP
