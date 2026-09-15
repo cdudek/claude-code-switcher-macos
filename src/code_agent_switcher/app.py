@@ -707,28 +707,32 @@ class ClaudeSwitcherApp(rumps.App):
             return
         self._refresh_in_progress = True
         accounts = load_accounts(self.config_path)
-        active_by_provider = {
-            "claude": get_active_account(self.config_path, provider="claude"),
-            "codex": get_active_account(self.config_path, provider="codex"),
-        }
+        # The LIVE account, not the recorded one. Mid-switch the record already
+        # names the target while the live credentials are still the old
+        # account's, and reading the live session under the target's name wrote
+        # one account's numbers into another account's series.
+        live_by_provider = {p: self._live_active_ref(p) for p in ("claude", "codex")}
 
         def _fetch():
             auto_switch_results = []
             try:
                 for account in accounts:
                     key = account_key(account)
-                    active = active_by_provider.get(account.provider)
-                    state = self._fetch_usage_state(account, active)
+                    is_live = live_by_provider.get(account.provider) == account.ref
+                    state = self._fetch_usage_state(account, is_live)
                     self._usage_state_cache[key] = state
                     # Every poll is thrown away otherwise, and the series is the
                     # only place the real budget per account can be read from.
-                    usage_log.record(
-                        provider=account.provider,
-                        account=account.email,
-                        plan=account.subscription_type or "",
-                        active=bool(active and active.email == account.email),
-                        state=state,
-                    )
+                    # A switch in flight means the live credentials are moving
+                    # underneath us; a reading taken then belongs to nobody.
+                    if account.provider not in self._switch_in_progress:
+                        usage_log.record(
+                            provider=account.provider,
+                            account=account.email,
+                            plan=account.subscription_type or "",
+                            active=is_live,
+                            state=state,
+                        )
 
                 for provider in ("claude", "codex"):
                     result = self._attempt_auto_switch(provider)
@@ -749,19 +753,19 @@ class ClaudeSwitcherApp(rumps.App):
 
         threading.Thread(target=_fetch, daemon=True).start()
 
-    def _fetch_usage_state(self, account, active_account) -> UsageState:
+    def _fetch_usage_state(self, account, is_live: bool) -> UsageState:
         try:
             if account.provider == "claude":
                 usage, reason = (
                     fetch_active_usage_detail()
-                    if active_account and active_account.email == account.email
-                    else fetch_usage_detail_for_account(account.email)
+                    if is_live
+                    else fetch_usage_detail_for_account(account.ref)
                 )
                 return claude_usage_state(usage, reason)
             if account.provider == "codex":
                 usage = (
                     fetch_active_codex_usage()
-                    if active_account and active_account.email == account.email
+                    if is_live
                     else fetch_codex_usage_for_account(account.email)
                 )
                 return codex_usage_state(usage)

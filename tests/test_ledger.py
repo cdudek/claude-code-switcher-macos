@@ -5,6 +5,7 @@ resumed session repeats every message, doubling the totals) and the session
 window reconstruction (the count of windows IS the count of limit resets).
 """
 
+import dataclasses
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +19,8 @@ from code_agent_switcher.ledger import (
     Totals,
     assumed_models,
     by_day,
+    by_project,
+    tokens_between_for,
     by_model,
     claude_records,
     codex_records,
@@ -236,3 +239,47 @@ class TestReportRenders:
         out = write_report([_rec(0)], tmp_path / "deep" / "usage.html")
         assert out.is_file()
         assert out.read_text().startswith("<!doctype html>")
+
+
+class TestProjectAttribution:
+    """Both agents record the working directory, so the spend can be split by
+    repository without anyone tagging anything."""
+
+    def test_claude_records_carry_the_project(self, tmp_path):
+        (tmp_path / "a.jsonl").write_text(json.dumps({
+            "timestamp": "2026-09-01T09:00:00.000Z",
+            "cwd": "/Users/x/projects/omr/omr-leadhub",
+            "message": {"id": "m1", "model": "claude-opus-5",
+                        "usage": {"output_tokens": 5}},
+        }) + "\n")
+        [r] = list(claude_records(root=tmp_path))
+        assert r.project == "omr-leadhub"
+
+    def test_a_record_with_no_cwd_is_not_fatal(self, tmp_path):
+        (tmp_path / "a.jsonl").write_text(_claude_line("m1", "2026-09-01T09:00:00.000Z"))
+        [r] = list(claude_records(root=tmp_path))
+        assert r.project == ""
+
+    def test_by_project_groups_and_ranks_by_cost(self):
+        records = [
+            dataclasses.replace(_rec(0, out=1_000_000), project="small"),
+            dataclasses.replace(_rec(1, out=9_000_000), project="big"),
+            dataclasses.replace(_rec(2, out=1_000_000), project="small"),
+        ]
+        grouped = by_project(records)
+        assert list(grouped) == ["big", "small"]
+        assert grouped["small"].messages == 2
+
+    def test_records_with_no_project_are_named_not_dropped(self):
+        assert list(by_project([_rec(0)])) == ["(unknown)"]
+
+
+class TestProviderScopedTokens:
+    def test_a_codex_window_is_not_priced_with_claude_tokens(self):
+        records = sorted(
+            [_rec(0, out=100), _rec(1, out=900, provider="codex")],
+            key=lambda r: r.at,
+        )
+        start, end = T0 - timedelta(minutes=1), T0 + timedelta(minutes=5)
+        assert tokens_between_for(records, start, end, "codex") == 900
+        assert tokens_between_for(records, start, end, "claude") == 100

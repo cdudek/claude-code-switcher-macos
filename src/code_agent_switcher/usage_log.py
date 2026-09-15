@@ -30,6 +30,11 @@ SAMPLES_PATH = (
 # line; this exists so it cannot grow without bound on a machine left running.
 MAX_SAMPLES = 500_000
 
+# No window moves this far in one polling interval. A bigger jump is a
+# mislabelled reading, not usage - and the file keeps its history, so a bad
+# sample written once would skew the rate for as long as it is kept.
+MAX_PLAUSIBLE_RISE = 30.0
+
 
 @dataclass(frozen=True)
 class Sample:
@@ -130,6 +135,7 @@ def prune(path: Path = SAMPLES_PATH, keep: int = MAX_SAMPLES) -> None:
 class Step:
     """One rise in a limit window, between two consecutive samples."""
 
+    provider: str
     account: str
     plan: str
     label: str
@@ -138,31 +144,46 @@ class Step:
     delta_percent: float
 
 
-def steps(samples: list[Sample], max_gap: timedelta = timedelta(minutes=30)) -> list[Step]:
-    """Consecutive rises per account and window.
+def series_key(sample: "Sample", label: str) -> tuple[str, str, str]:
+    """Provider first. Claude and Codex both call a window "7d", and one address
+    can hold an account on each, so keying on the address alone spliced two
+    unrelated series together - which read as a rise of several thousand
+    percent."""
+    return (sample.provider, sample.account, label)
 
-    Pairs are dropped when the percentage FELL, which means the window reset in
-    between and the difference measures nothing, and when the samples are too
-    far apart to attribute tokens to the interval - the app is not always
-    running, and a twelve-hour gap is not a measurement.
+
+def steps(samples: list[Sample], max_gap: timedelta = timedelta(minutes=30)) -> list[Step]:
+    """Consecutive rises per provider, account and window.
+
+    Three kinds of pair are dropped:
+
+    - the percentage FELL, which means the window reset in between and the
+      difference measures nothing;
+    - the samples are too far apart to attribute tokens to the interval - the
+      app is not always running, and a twelve-hour gap is not a measurement;
+    - the account was not the one in use for the whole interval, so the tokens
+      spent in it were not spent by this account.
     """
-    by_key: dict[tuple[str, str], list[Sample]] = {}
+    by_key: dict[tuple[str, str, str], list[Sample]] = {}
     for s in samples:
         for label in s.windows:
-            by_key.setdefault((s.account, label), []).append(s)
+            by_key.setdefault(series_key(s, label), []).append(s)
 
     out: list[Step] = []
-    for (account, label), series in by_key.items():
+    for (provider, account, label), series in by_key.items():
         series.sort(key=lambda s: s.at)
         for before, after in zip(series, series[1:]):
             gap = after.at - before.at
             if gap <= timedelta(0) or gap > max_gap:
                 continue
+            if not (before.active and after.active):
+                continue
             rise = after.windows[label] - before.windows[label]
-            if rise <= 0:
+            if rise <= 0 or rise > MAX_PLAUSIBLE_RISE:
                 continue
             out.append(
                 Step(
+                    provider=provider,
                     account=account,
                     plan=after.plan,
                     label=label,
@@ -175,22 +196,31 @@ def steps(samples: list[Sample], max_gap: timedelta = timedelta(minutes=30)) -> 
     return out
 
 
-def resets_seen(samples: list[Sample]) -> dict[tuple[str, str], int]:
+def latest(samples: list[Sample]) -> dict[tuple[str, str, str], float]:
+    """The most recent reading per series, for "how much is left right now"."""
+    out: dict[tuple[str, str, str], float] = {}
+    for s in samples:
+        for label, percent in s.windows.items():
+            out[series_key(s, label)] = percent
+    return out
+
+
+def resets_seen(samples: list[Sample]) -> dict[tuple[str, str, str], int]:
     """How often each window actually reset, counted from a drop in the figure.
 
     This is the measured count, as opposed to the one the report reconstructs
     from message timestamps. When the two disagree the reconstruction is wrong.
     """
-    counts: dict[tuple[str, str], int] = {}
-    by_key: dict[tuple[str, str], list[Sample]] = {}
+    counts: dict[tuple[str, str, str], int] = {}
+    by_key: dict[tuple[str, str, str], list[Sample]] = {}
     for s in samples:
         for label in s.windows:
-            by_key.setdefault((s.account, label), []).append(s)
+            by_key.setdefault(series_key(s, label), []).append(s)
     for key, series in by_key.items():
         series.sort(key=lambda s: s.at)
         counts[key] = sum(
             1
             for before, after in zip(series, series[1:])
-            if after.windows[key[1]] < before.windows[key[1]] - 1.0
+            if after.windows[key[2]] < before.windows[key[2]] - 1.0
         )
     return counts

@@ -27,6 +27,8 @@ from code_agent_switcher.ledger import (
     by_provider,
     by_weekday,
     tokens_between,
+    tokens_between_for,
+    by_project,
     session_windows,
     unpriced_models,
     windows_per_day,
@@ -186,46 +188,123 @@ def _profile(buckets: dict, labels, heading: str, note_col: str) -> str:
 <tbody>{"".join(rows)}</tbody></table>"""
 
 
-def _budget_section(records: list[Record], samples: list) -> str:
-    """What a percentage point of each limit window actually buys.
+def _rates(records: list[Record], samples: list):
+    """Tokens per one percent, per provider, account and window.
 
-    Pairs every rise in the reported percentage with the tokens spent in that
-    interval. Only the account that was active can have spent them, so only
-    active steps count.
+    Each rise in the reported figure is paired with the tokens the SAME agent
+    spent in that interval - a Codex window priced with Claude's tokens would
+    be a number about nothing.
     """
-    if not samples:
-        return ("<p class=empty>No readings yet. The app records one every five "
-                "minutes it is running; come back in a day and this fills in.</p>")
-    steps = [s for s in usage_log.steps(samples)]
-    rows = []
-    grouped: dict[tuple[str, str, str], list] = {}
-    for step in steps:
-        grouped.setdefault((step.account, step.plan, step.label), []).append(step)
-    for (account, plan, label), group in sorted(grouped.items()):
+    grouped: dict[tuple[str, str, str, str], list] = {}
+    for step in usage_log.steps(samples):
+        grouped.setdefault(
+            (step.provider, step.account, step.plan, step.label), []
+        ).append(step)
+
+    out = {}
+    for key, group in grouped.items():
         percent = sum(g.delta_percent for g in group)
-        tokens = sum(
-            tokens_between(records, g.at - timedelta(minutes=g.minutes), g.at)
-            for g in group
-        )
         if percent <= 0:
             continue
-        per_point = tokens / percent
+        tokens = sum(
+            tokens_between_for(
+                records, g.at - timedelta(minutes=g.minutes), g.at, key[0]
+            )
+            for g in group
+        )
+        # No tokens in the intervals where the window moved means the work did
+        # not come from a transcript this Mac holds, not that it was free.
+        out[key] = (tokens / percent if tokens else None, percent, len(group))
+    return out
+
+
+def _budget_section(records: list[Record], samples: list) -> str:
+    if not samples:
+        return ("<p class=empty>No readings yet. The app records one every "
+                "fifteen seconds while the panel is open and every five minutes "
+                "otherwise; come back tomorrow and this fills in.</p>")
+    rates = _rates(records, samples)
+    if not rates:
+        return ("<p class=empty>Readings are being collected but none of them rose "
+                "while the account was in use - that pairing is what makes this "
+                "measurable.</p>")
+    now = usage_log.latest(samples)
+    rows = []
+    for (provider, account, plan, label), (per_point, percent, count) in sorted(rates.items()):
+        used = now.get((provider, account, label))
+        # Under ten points observed the rate is one or two samples wide and says
+        # more about when the app was running than about the allowance.
+        note = "measured" if percent >= 10 else "thin"
+        whole = left = used_cell = "&ndash;"
+        if per_point is None:
+            # The window moved but no transcript on this Mac accounts for it -
+            # Codex used from somewhere other than the CLI, say. Reporting zero
+            # tokens for a window that demonstrably moved would be a lie.
+            note = "no local transcripts"
+        else:
+            whole = _tokens(int(per_point * 100))
+            if used is not None:
+                left = _tokens(int((100.0 - used) * per_point))
+        if used is not None:
+            used_cell = f"{used:.0f}%"
         rows.append(f"""<tr>
 <th scope=row>{html.escape(account)}</th>
+<td>{html.escape(provider)}</td>
 <td>{html.escape(plan)}</td>
 <td>{html.escape(label)}</td>
-<td class=num>{len(group)}</td>
-<td class=num>{percent:.1f}%</td>
-<td class=num>{_tokens(int(per_point))}</td>
-<td class=num>{_tokens(int(per_point * 100))}</td>
+<td class=num>{whole}</td>
+<td class=num>{left}</td>
+<td class=num>{used_cell}</td>
+<td class=num>{_tokens(int(per_point)) if per_point else "&ndash;"}</td>
+<td class=num>{percent:.0f}% / {count} <span class=flag>{note}</span></td>
 </tr>""")
-    if not rows:
-        return ("<p class=empty>Readings are being collected but none of them rose yet - "
-                "a rise between two consecutive readings is what makes this measurable.</p>")
     return f"""<table>
-<thead><tr><th scope=col>Account</th><th scope=col>Plan</th><th scope=col>Window</th>
-<th scope=col class=num>Steps</th><th scope=col class=num>Observed</th>
-<th scope=col class=num>Per 1%</th><th scope=col class=num>Full window</th></tr></thead>
+<thead><tr><th scope=col>Account</th><th scope=col>Agent</th><th scope=col>Plan</th>
+<th scope=col>Window</th><th scope=col class=num>Whole window</th>
+<th scope=col class=num>Left now</th><th scope=col class=num>Used</th>
+<th scope=col class=num>Per 1%</th><th scope=col class=num>Observed</th></tr></thead>
+<tbody>{"".join(rows)}</tbody></table>"""
+
+
+def _rate_by_hour_section(records: list[Record], samples: list, label: str) -> str:
+    """Does a percentage point buy fewer tokens at some hours than others?
+
+    Same arithmetic as the budget table, bucketed by the local hour the rise was
+    observed in. If the allowance is metered the same way all day, the column is
+    flat; if it is not, this is where it shows.
+    """
+    buckets: dict[int, list[float]] = {}
+    for step in usage_log.steps(samples):
+        if step.label != label:
+            continue
+        spent = tokens_between_for(
+            records, step.at - timedelta(minutes=step.minutes), step.at, step.provider
+        )
+        hour = step.at.astimezone().hour
+        entry = buckets.setdefault(hour, [0.0, 0.0, 0])
+        entry[0] += spent
+        entry[1] += step.delta_percent
+        entry[2] += 1
+    usable = {h: v for h, v in buckets.items() if v[1] > 0}
+    if not usable:
+        return ("<p class=empty>Not enough readings yet to compare hours. This "
+                "needs rises observed at several times of day.</p>")
+    scale = max(v[0] / v[1] for v in usable.values())
+    rows = []
+    for hour in sorted(usable):
+        spent, percent, count = usable[hour]
+        per_point = spent / percent
+        rows.append(f"""<tr>
+<th scope=row>{hour:02d}:00</th>
+<td class=bars>{_stack([("tokens per 1%", int(per_point), SAND)], int(scale))}</td>
+<td class=num>{_tokens(int(per_point))}</td>
+<td class=num>{percent:.0f}%</td>
+<td class=num>{count}</td>
+</tr>""")
+    return f"""<table>
+<thead><tr><th scope=col>Hour</th><th scope=col>Tokens per 1% of the {html.escape(label)} window</th>
+<th scope=col class=num>Per 1%</th><th scope=col class=num>Observed</th>
+<th scope=col class=num>Steps</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table>"""
 
 
@@ -369,13 +448,30 @@ also where a window runs out.</p>
 
 <h2>Observed budget</h2>
 <div class=wrap>{_budget_section(records, samples)}</div>
-<p class=note>Per 1% is the tokens spent while the reported figure rose one point,
-so Full window is what the whole allowance is worth at the rate you are actually
-using it. Different accounts and plans land differently, and the same account can
-land differently at different times - that difference is the point of the table.
-It needs the app running to collect readings, and the transcripts carry no account
-attribution of their own, so the history before this version cannot be split by
-account.</p>
+<p class=note><b>Per 1%</b> is the tokens spent while the reported figure rose one
+point. <b>Whole window</b> is that times a hundred: what the allowance is worth at
+the rate you are actually working, which is the answer to "what would I get if I
+used it up". <b>Left now</b> prices the unused part of the latest reading.</p>
+<p class=note>Every row is measured on this Mac, not published by anyone.
+<i>Thin</i> means under ten points of movement seen so far, which is one or two
+samples and says more about when the app was running than about the allowance.
+<i>No local transcripts</i> means the window moved but nothing on this Mac
+accounts for it - Codex driven from somewhere other than the CLI does that - so
+the rate is unknown rather than zero. It also cannot be backfilled: the
+transcripts carry no account attribution, so only readings taken from this
+version onwards can be split by account.</p>
+
+<h2>What a percentage point buys, by hour</h2>
+<div class=wrap>{_rate_by_hour_section(records, samples, "5h")}</div>
+<p class=note>The same arithmetic as the table above, bucketed by the local hour
+the rise was observed in. A flat column means the allowance is metered the same
+way all day. It is not a measure of how hard you worked at that hour - that is
+the Time of day table - it is how much work one point of the window paid for.</p>
+
+<h2>By project</h2>
+<div class=wrap>{_totals_table(by_project(records), "Project")}</div>
+<p class=note>The working directory each message was sent from, which both
+agents record, so nothing has to be tagged by hand.</p>
 
 <h2>By model</h2>
 <div class=wrap>{_totals_table(models, "Model")}</div>

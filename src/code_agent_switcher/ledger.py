@@ -85,6 +85,9 @@ class Record:
     output: int
     cache_write: int
     cache_read: int
+    # Where the work happened. Both agents record the working directory, so the
+    # spend can be split by repository without asking anyone to tag anything.
+    project: str = ""
 
     @property
     def billable(self) -> int:
@@ -202,6 +205,7 @@ def claude_records(since: date | None = None, root: Path = CLAUDE_PROJECTS) -> I
                 yield Record(
                     at=at,
                     provider="claude",
+                    project=_project_name(entry.get("cwd")),
                     model=message.get("model") or "unknown",
                     input=int(usage.get("input_tokens") or 0),
                     output=int(usage.get("output_tokens") or 0),
@@ -224,6 +228,7 @@ def codex_records(since: date | None = None, root: Path = CODEX_SESSIONS) -> Ite
         except OSError:
             continue
         model = "unknown"
+        project = ""
         with handle:
             for line in handle:
                 try:
@@ -235,6 +240,9 @@ def codex_records(since: date | None = None, root: Path = CODEX_SESSIONS) -> Ite
                     found = _find_model(entry.get("payload"))
                     if found:
                         model = found
+                    found_cwd = _find_key(entry.get("payload"), "cwd")
+                    if found_cwd:
+                        project = _project_name(found_cwd)
                     continue
                 if kind != "token_usage_record":
                     continue
@@ -258,6 +266,7 @@ def codex_records(since: date | None = None, root: Path = CODEX_SESSIONS) -> Ite
                 yield Record(
                     at=at,
                     provider="codex",
+                    project=project,
                     model=model,
                     # Codex reports input_tokens INCLUSIVE of the cached part.
                     input=max(int(usage.get("input_tokens") or 0) - cached, 0),
@@ -265,6 +274,27 @@ def codex_records(since: date | None = None, root: Path = CODEX_SESSIONS) -> Ite
                     cache_write=int(usage.get("cache_write_input_tokens") or 0),
                     cache_read=cached,
                 )
+
+
+def _project_name(cwd) -> str:
+    """The last path component. A full path is noise in a table and carries
+    more of someone's filesystem than a report needs."""
+    if not isinstance(cwd, str) or not cwd:
+        return ""
+    return Path(cwd).name or cwd
+
+
+def _find_key(payload, key: str) -> str | None:
+    """Pull a string value out of a nested payload without knowing its shape."""
+    if isinstance(payload, dict):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+        for nested in payload.values():
+            found = _find_key(nested, key)
+            if found:
+                return found
+    return None
 
 
 def _find_model(payload) -> str | None:
@@ -373,3 +403,26 @@ def tokens_between(records: list[Record], start: datetime, end: datetime) -> int
     lo = bisect.bisect_left(times, start)
     hi = bisect.bisect_left(times, end)
     return sum(r.billable for r in records[lo:hi])
+
+
+def by_project(records: Iterable[Record]) -> dict[str, Totals]:
+    """Spend per working directory, biggest first."""
+    out: dict[str, Totals] = {}
+    for r in records:
+        out.setdefault(r.project or "(unknown)", Totals()).add(r)
+    return dict(sorted(out.items(), key=lambda kv: -kv[1].dollars))
+
+
+def tokens_between_for(
+    records: list[Record], start: datetime, end: datetime, provider: str
+) -> int:
+    """Billable tokens in an interval, for one agent only.
+
+    A Codex window must not be priced with Claude's tokens.
+    """
+    import bisect
+
+    times = [r.at for r in records]
+    lo = bisect.bisect_left(times, start)
+    hi = bisect.bisect_left(times, end)
+    return sum(r.billable for r in records[lo:hi] if r.provider == provider)

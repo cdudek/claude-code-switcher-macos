@@ -114,10 +114,71 @@ class TestResetsSeen:
         p = tmp_path / "s.jsonl"
         for pct in (10.0, 40.0, 3.0, 20.0, 1.0):
             _write(p, T0 + timedelta(minutes=len(usage_log.load(p)) * 5), "a@b.c", pct)
-        assert usage_log.resets_seen(usage_log.load(p))[("a@b.c", "5h")] == 2
+        assert usage_log.resets_seen(usage_log.load(p))[("claude", "a@b.c", "5h")] == 2
 
     def test_noise_below_a_point_is_not_a_reset(self, tmp_path):
         p = tmp_path / "s.jsonl"
         _write(p, T0, "a@b.c", 40.0)
         _write(p, T0 + timedelta(minutes=5), "a@b.c", 39.5)
-        assert usage_log.resets_seen(usage_log.load(p))[("a@b.c", "5h")] == 0
+        assert usage_log.resets_seen(usage_log.load(p))[("claude", "a@b.c", "5h")] == 0
+
+
+class TestProviderKeying:
+    """Claude and Codex both call a window "7d", and one address can hold an
+    account on each. Keying on the address alone spliced the two series
+    together and read as a rise of several thousand percent."""
+
+    def _two_providers(self, tmp_path):
+        p = tmp_path / "s.jsonl"
+        for i, (provider, pct) in enumerate(
+            [("claude", 97.0), ("codex", 40.0), ("claude", 98.0), ("codex", 41.0)]
+        ):
+            usage_log.record(provider, "a@b.c", "team", True, _state(("7d", pct)),
+                             path=p, now=T0 + timedelta(minutes=i))
+        return usage_log.steps(usage_log.load(p))
+
+    def test_the_two_series_do_not_splice(self, tmp_path):
+        rises = {(s.provider, s.delta_percent) for s in self._two_providers(tmp_path)}
+        assert rises == {("claude", 1.0), ("codex", 1.0)}
+
+    def test_each_step_names_its_provider(self, tmp_path):
+        assert {s.provider for s in self._two_providers(tmp_path)} == {"claude", "codex"}
+
+
+class TestOnlyTheAccountInUse:
+    def test_a_rise_while_the_account_was_idle_is_not_attributed(self, tmp_path):
+        """Tokens spent in that interval were spent by a different account."""
+        p = tmp_path / "s.jsonl"
+        _write(p, T0, "a@b.c", 10.0, active=False)
+        _write(p, T0 + timedelta(minutes=5), "a@b.c", 20.0, active=False)
+        assert usage_log.steps(usage_log.load(p)) == []
+
+    def test_becoming_active_mid_pair_is_not_attributed(self, tmp_path):
+        p = tmp_path / "s.jsonl"
+        _write(p, T0, "a@b.c", 10.0, active=False)
+        _write(p, T0 + timedelta(minutes=5), "a@b.c", 20.0, active=True)
+        assert usage_log.steps(usage_log.load(p)) == []
+
+
+class TestImplausibleRise:
+    def test_a_jump_no_window_could_make_is_dropped(self, tmp_path):
+        """A mislabelled reading written once would skew the rate for as long
+        as the file keeps it."""
+        p = tmp_path / "s.jsonl"
+        _write(p, T0, "a@b.c", 35.0)
+        _write(p, T0 + timedelta(minutes=1), "a@b.c", 98.0)
+        assert usage_log.steps(usage_log.load(p)) == []
+
+    def test_a_large_but_possible_rise_is_kept(self, tmp_path):
+        p = tmp_path / "s.jsonl"
+        _write(p, T0, "a@b.c", 10.0)
+        _write(p, T0 + timedelta(minutes=5), "a@b.c", 10.0 + usage_log.MAX_PLAUSIBLE_RISE - 1)
+        assert len(usage_log.steps(usage_log.load(p))) == 1
+
+
+class TestLatest:
+    def test_the_newest_reading_wins(self, tmp_path):
+        p = tmp_path / "s.jsonl"
+        _write(p, T0, "a@b.c", 10.0)
+        _write(p, T0 + timedelta(minutes=5), "a@b.c", 12.0)
+        assert usage_log.latest(usage_log.load(p))[("claude", "a@b.c", "5h")] == 12.0
