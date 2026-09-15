@@ -50,10 +50,21 @@ from code_agent_switcher.core import (
     ClaudeCredentialsExpiredError,
 )
 from code_agent_switcher.usage import fetch_usage_detail_for_account, fetch_active_usage_detail, claude_usage_state
-from code_agent_switcher.usage_state import ROW_INDENT, UsageState, usage_rows
+from code_agent_switcher.usage_state import UsageState
 from code_agent_switcher.ledger import load_records, since_days
 from code_agent_switcher.report import write_report
-from code_agent_switcher import usage_log
+from code_agent_switcher import ui, usage_log
+from code_agent_switcher.accounts_window import AccountsWindowController
+
+import AppKit
+import objc
+from Foundation import NSRunLoop, NSRunLoopCommonModes, NSTimer
+
+# While the panel is open the reading is worth keeping current; while it is shut
+# nobody is looking, and polling four accounts every five minutes for an empty
+# screen is four requests a minute nobody asked for.
+OPEN_POLL_SECONDS = 15.0
+BACKGROUND_POLL_SECONDS = 300.0
 
 # A month is long enough to see a trend and short enough to read in a few
 # seconds; the whole transcript tree here is 1.3 GB.
@@ -101,20 +112,46 @@ def _on_main_thread(fn):
     NSOperationQueue.mainQueue().addOperationWithBlock_(fn)
 
 
+class _MenuWatcher(AppKit.NSObject):
+    """Tells the app when the panel is on screen, so it can poll only then."""
+
+    def initWithApp_(self, app):
+        self = objc.super(_MenuWatcher, self).init()
+        if self is None:
+            return None
+        self._app = app
+        return self
+
+    def menuWillOpen_(self, menu):
+        self._app.on_menu_open()
+
+    def menuDidClose_(self, menu):
+        self._app.on_menu_close()
+
+
 class ClaudeSwitcherApp(rumps.App):
     def __init__(self):
         self.config_path = DEFAULT_CONFIG_PATH
         super().__init__("", icon=icon_path(), template=True, quit_button=None)
         self._usage_cache: dict[tuple[str, str], str] = {}
         self._usage_state_cache: dict[tuple[str, str], UsageState] = {}
-        self._usage_items: dict[tuple[str, str], rumps.MenuItem] = {}
+        self._usage_items: dict[tuple[str, str], object] = {}
+        self._card_meta: dict[tuple[str, str], tuple[str, str, bool]] = {}
+        self._menu_open = False
+        self._open_timer = None
+        self._accounts_window = AccountsWindowController(self)
+        self._watcher = _MenuWatcher.alloc().initWithApp_(self)
         self._last_auto_switch_attempt: dict[str, float] = {}
         self._refresh_in_progress = False
         self._switch_in_progress: set[str] = set()
         self._first_launch()
         self._rebuild_menu()
         self._fetch_all_usage()
-        self._auto_switch_timer = rumps.Timer(self._on_periodic_usage_refresh, 300)
+        # Kept only for auto-switch, which has to notice a spent limit while
+        # nobody is looking at the panel.
+        self._auto_switch_timer = rumps.Timer(
+            self._on_periodic_usage_refresh, BACKGROUND_POLL_SECONDS
+        )
         self._auto_switch_timer.start()
         self._update_in_progress = False
         self._report_in_progress = False
@@ -168,50 +205,120 @@ class ClaudeSwitcherApp(rumps.App):
             )
 
     def _rebuild_menu(self):
-        """Rebuild the menu from current account state."""
+        """Draw the panel: a reading at the top, the controls under it."""
         accounts = load_accounts(self.config_path)
         self.menu.clear()
         self._usage_items = {}
+        self._card_meta = {}
 
-        claude_accounts = [a for a in accounts if a.provider == "claude"]
-        codex_accounts = [a for a in accounts if a.provider == "codex"]
+        nsmenu = self.menu._menu
+        nsmenu.setDelegate_(self._watcher)
+        nsmenu.addItem_(ui.menu_item_with_view(ui.panel_title("Usage")))
 
-        if claude_accounts:
-            self._add_provider_section("claude", claude_accounts)
-        if codex_accounts:
-            if claude_accounts:
-                self.menu.add(rumps.separator)
-            self._add_provider_section("codex", codex_accounts)
+        for provider in ("claude", "codex"):
+            rows = [a for a in accounts if a.provider == provider]
+            if not rows:
+                continue
+            nsmenu.addItem_(ui.menu_item_with_view(ui.section_header(PROVIDER_LABELS[provider])))
+            live = self._live_active_email(provider)
+            for account in rows:
+                key = account_key(account)
+                active = self._is_row_active(account.email, live, account.active)
+                self._card_meta[key] = (
+                    account.email, account.subscription_type or "", active
+                )
+                item = ui.menu_item_with_view(self._card_for(key))
+                nsmenu.addItem_(item)
+                self._usage_items[key] = item
+            nsmenu.addItem_(ui.menu_item_with_view(ui.spacer()))
 
+        if not accounts:
+            nsmenu.addItem_(ui.menu_item_with_view(
+                ui.section_header("no accounts saved yet")
+            ))
+
+        self.menu.add(rumps.MenuItem("\u25A3  Manage accounts\u2026",
+                                     callback=self._on_manage_accounts))
+        self.menu.add(rumps.MenuItem("\u25F7  Usage report\u2026",
+                                     callback=self._on_usage_report))
         self.menu.add(rumps.separator)
-        self._add_auto_switch_menu()
-        self._add_update_menu()
-        self.menu.add(rumps.MenuItem("\u271A  Add Claude account...", callback=self._on_add_claude_account))
-        self.menu.add(rumps.MenuItem("\u271A  Add Codex account...", callback=self._on_add_codex_account))
-        self.menu.add(rumps.MenuItem("\u21BB  Refresh usage", callback=self._on_refresh_usage))
-        self.menu.add(rumps.MenuItem("\u25F7  Usage report\u2026", callback=self._on_usage_report))
-
-        if accounts:
-            remove_menu = rumps.MenuItem("\u2212  Remove account")
-            for account in accounts:
-                provider_label = "Claude" if account.provider == "claude" else "Codex"
-                item = rumps.MenuItem(f"[{provider_label}] {account.email}", callback=self._on_remove_account)
-                item._email = account.email
-                item._provider = account.provider
-                remove_menu.add(item)
-            self.menu.add(remove_menu)
-
+        settings = rumps.MenuItem("\u2699  Settings")
+        self._add_auto_switch_menu(settings)
+        self._add_update_menu(settings)
+        self.menu.add(settings)
         self.menu.add(rumps.separator)
-        self.menu.add(rumps.MenuItem("\u23FB  Quit", callback=rumps.quit_application))
+        self.menu.add(rumps.MenuItem(f"\u23FB  Quit  (v{updater.current_version()})",
+                                     callback=rumps.quit_application))
 
-    def _add_update_menu(self):
+    def _card_for(self, key):
+        """Build one account card from the cached reading."""
+        email, plan, active = self._card_meta.get(key, ("", "", False))
+        state = self._usage_state_cache.get(key)
+        return ui.account_card(
+            email, plan, active,
+            ui.rows_for(state) if state else [],
+            reason=getattr(state, "reason", None) if state else "reading\u2026",
+        )
+
+    # -- polling ---------------------------------------------------------
+    def on_menu_open(self):
+        """The panel is on screen: read now, then keep reading while it is up."""
+        self._menu_open = True
+        self._fetch_all_usage()
+        if self._open_timer is None:
+            self._open_timer = NSTimer.timerWithTimeInterval_repeats_block_(
+                OPEN_POLL_SECONDS, True, lambda _timer: self._fetch_all_usage()
+            )
+            # A tracking menu runs the loop in event-tracking mode, where a
+            # default-mode timer never fires. Common modes covers both.
+            NSRunLoop.currentRunLoop().addTimer_forMode_(
+                self._open_timer, NSRunLoopCommonModes
+            )
+
+    def on_menu_close(self):
+        self._menu_open = False
+        if self._open_timer is not None:
+            self._open_timer.invalidate()
+            self._open_timer = None
+
+    # -- the accounts screen ---------------------------------------------
+    def _on_manage_accounts(self, _):
+        self._show_accounts_window()
+
+    def _show_accounts_window(self):
+        self._accounts_window.show(
+            load_accounts(self.config_path),
+            {p: self._live_active_email(p) for p in ("claude", "codex")},
+            updater.current_version(),
+        )
+
+    def _refresh_accounts_window(self):
+        self._accounts_window.rebuild(
+            load_accounts(self.config_path),
+            {p: self._live_active_email(p) for p in ("claude", "codex")},
+            updater.current_version(),
+        )
+
+    def switch_from_window(self, provider, email):
+        self._switch_account(provider, email)
+
+    def add_from_window(self, provider):
+        if provider == "claude":
+            self._on_add_claude_account(None)
+        else:
+            self._on_add_codex_account(None)
+
+    def remove_from_window(self, provider, email):
+        self._remove_account(provider, email)
+
+    def _add_update_menu(self, parent):
         version = updater.current_version()
         menu = rumps.MenuItem(f"\u2191  Updates (v{version})")
         menu.add(rumps.MenuItem("Check now...", callback=self._on_check_for_update))
         auto = rumps.MenuItem("Check automatically", callback=self._on_toggle_auto_update)
         auto.state = 1 if load_settings(self.config_path).auto_update else 0
         menu.add(auto)
-        self.menu.add(menu)
+        parent.add(menu)
 
     def _on_toggle_auto_update(self, sender):
         set_auto_update(not bool(sender.state), self.config_path)
@@ -327,43 +434,7 @@ class ClaudeSwitcherApp(rumps.App):
                 set_active_account(email, self.config_path, provider=provider)
         return email
 
-    def _add_provider_section(self, provider: str, accounts):
-        header = rumps.MenuItem(f"\u2500\u2500 {PROVIDER_LABELS[provider]} \u2500\u2500")
-        header.set_callback(None)
-        self.menu.add(header)
-
-        live_email = self._live_active_email(provider)
-        for account in accounts:
-            has_creds = self._has_credentials(account)
-            is_active = self._is_row_active(account.email, live_email, account.active)
-            prefix = "\u25C9  " if is_active else "\u25CB  "
-            if has_creds:
-                label = f"{prefix}{account.email} ({account.subscription_type})"
-                callback = (
-                    self._on_claude_account_click
-                    if provider == "claude"
-                    else self._on_codex_account_click
-                )
-                item = rumps.MenuItem(label, callback=callback)
-            else:
-                item = rumps.MenuItem(f"{prefix}{account.email} (unavailable)", callback=None)
-            item._email = account.email
-            item._provider = provider
-            self.menu.add(item)
-
-            if has_creds:
-                key = account_key(account)
-                rows = self._usage_cache.get(key) or ("reading usage\u2026", "")
-                items = []
-                for row in rows:
-                    label = rumps.MenuItem(f"{ROW_INDENT}{row}", callback=None)
-                    label._email = account.email
-                    label._provider = provider
-                    items.append(label)
-                    self.menu.add(label)
-                self._usage_items[key] = tuple(items)
-
-    def _add_auto_switch_menu(self):
+    def _add_auto_switch_menu(self, parent):
         settings = load_settings(self.config_path)
         auto_menu = rumps.MenuItem("Auto-switch")
         for provider in ("claude", "codex"):
@@ -371,7 +442,7 @@ class ClaudeSwitcherApp(rumps.App):
             item._provider = provider
             item.state = 1 if settings.auto_switch.get(provider, False) else 0
             auto_menu.add(item)
-        self.menu.add(auto_menu)
+        parent.add(auto_menu)
 
     def _has_credentials(self, account) -> bool:
         service = (
@@ -380,12 +451,6 @@ class ClaudeSwitcherApp(rumps.App):
             else f"codex-switcher:{account.email}"
         )
         return keychain.read_credentials(service) is not None
-
-    def _on_claude_account_click(self, sender):
-        self._switch_account("claude", sender._email)
-
-    def _on_codex_account_click(self, sender):
-        self._switch_account("codex", sender._email)
 
     def _switch_account(self, provider: str, email: str):
         live_email = self._live_active_email(provider)
@@ -427,6 +492,7 @@ class ClaudeSwitcherApp(rumps.App):
                         message=email,
                     )
                 self._rebuild_menu()
+                self._refresh_accounts_window()
                 self._fetch_all_usage()
 
             _on_main_thread(_finish)
@@ -475,6 +541,7 @@ class ClaudeSwitcherApp(rumps.App):
             message=email,
         )
         self._rebuild_menu()
+        self._refresh_accounts_window()
         self._fetch_all_usage()
 
     def _on_add_claude_account(self, _):
@@ -588,7 +655,6 @@ class ClaudeSwitcherApp(rumps.App):
                     active = active_by_provider.get(account.provider)
                     state = self._fetch_usage_state(account, active)
                     self._usage_state_cache[key] = state
-                    self._usage_cache[key] = usage_rows(state)
                     # Every poll is thrown away otherwise, and the series is the
                     # only place the real budget per account can be read from.
                     usage_log.record(
@@ -709,11 +775,12 @@ class ClaudeSwitcherApp(rumps.App):
             )
 
     def _update_usage_labels(self):
-        """Rewrite the usage rows in place, without rebuilding the menu."""
-        for key, items in self._usage_items.items():
-            rows = self._usage_cache.get(key) or ("no usage reading", "reason unknown")
-            for item, row in zip(items, rows):
-                item.title = f"{ROW_INDENT}{row}"
+        """Redraw each card in place. Works while the panel is open."""
+        for key, item in self._usage_items.items():
+            try:
+                item.setView_(self._card_for(key))
+            except Exception:
+                continue
 
     def _on_refresh_usage(self, _):
         """Refresh usage data for all accounts."""
