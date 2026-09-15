@@ -11,6 +11,8 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+from code_agent_switcher import backups
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -330,6 +332,8 @@ def _write_codex_credentials(creds: str) -> None:
     if _credentials_data(creds) is None:
         raise RuntimeError("Invalid Codex credentials; refusing to write ~/.codex/auth.json.")
     CODEX_AUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # Codex's credentials, not this app's. A copy goes aside first.
+    backups.snapshot(CODEX_AUTH_FILE)
     CODEX_AUTH_FILE.write_text(creds, encoding="utf-8")
     CODEX_AUTH_FILE.chmod(0o600)
 

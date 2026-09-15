@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from code_agent_switcher import keychain
+from code_agent_switcher import backups, keychain
 from code_agent_switcher.config import (
     find_account,
     ref_email,
@@ -246,6 +246,8 @@ def _write_oauth_account(oauth_account: dict) -> None:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return
     data["oauthAccount"] = oauth_account
+    # Claude Code's own state file, not this app's. A copy goes aside first.
+    backups.snapshot(CLAUDE_STATE_FILE)
     CLAUDE_STATE_FILE.write_text(json.dumps(data), encoding="utf-8")
 
 

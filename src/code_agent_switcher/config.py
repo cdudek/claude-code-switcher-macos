@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
+from code_agent_switcher import backups
+
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "claude-switcher" / "accounts.json"
 CONFIG_VERSION = 2
@@ -102,6 +104,7 @@ def _write_config_data(data: dict, path: Path = DEFAULT_CONFIG_PATH) -> None:
     data.setdefault("version", CONFIG_VERSION)
     data.setdefault("settings", _default_settings_dict())
     data.setdefault("accounts", [])
+    backups.snapshot(path)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     os.chmod(path, 0o600)
 

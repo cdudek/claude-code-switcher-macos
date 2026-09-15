@@ -20,3 +20,16 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "real_refresh: test drives refresh_claude_credentials itself"
     )
+
+
+@pytest.fixture(autouse=True)
+def _backups_stay_in_the_sandbox(tmp_path, monkeypatch):
+    """No test writes into the real backup directory.
+
+    Without this the suite filled it with 30 copies of tmp-file junk in four
+    minutes, and `accounts.json` reached its 20-copy limit - so a real backup
+    would have been evicted by a test run. The directory exists to survive
+    exactly that kind of accident.
+    """
+    from code_agent_switcher import backups
+    monkeypatch.setattr(backups, "BACKUP_DIR", tmp_path / "backups")
