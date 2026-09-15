@@ -3,6 +3,7 @@
 import tempfile
 import subprocess
 import threading
+from collections import Counter
 import time
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from code_agent_switcher.config import (
     set_active_account,
     load_settings,
     sort_accounts,
+    ref_email,
     set_auto_switch_enabled,
     set_auto_update,
     DEFAULT_CONFIG_PATH,
@@ -43,6 +45,8 @@ from code_agent_switcher.config import (
 from code_agent_switcher import updater
 from code_agent_switcher.icons import icon_path
 from code_agent_switcher.core import (
+    live_claude_org,
+    snapshot_service,
     check_claude_cli,
     live_claude_email,
     import_current_account,
@@ -234,12 +238,15 @@ class ClaudeSwitcherApp(rumps.App):
             if not rows:
                 continue
             nsmenu.addItem_(ui.menu_item_with_view(ui.section_header(PROVIDER_LABELS[provider])))
-            live = self._live_active_email(provider)
+            live = self._live_active_ref(provider)
+            shared_address = Counter(a.email for a in rows)
             for account in rows:
                 key = account_key(account)
-                active = self._is_row_active(account.email, live, account.active)
+                active = self._is_row_active(account.ref, live, account.active)
                 self._card_meta[key] = (
-                    account.email, account.subscription_type or "", active
+                    account.email, account.subscription_type or "", active,
+                    # Two rows on one address read as duplicates without it.
+                    account.org_name if shared_address[account.email] > 1 else "",
                 )
                 item = ui.menu_item_with_view(self._card_for(key), enabled=not active)
                 nsmenu.addItem_(item)
@@ -275,17 +282,18 @@ class ClaudeSwitcherApp(rumps.App):
 
     def _card_for(self, key):
         """Build one account card from the cached reading."""
-        email, plan, active = self._card_meta.get(key, ("", "", False))
-        provider = key[0]
+        email, plan, active, org = self._card_meta.get(key, ("", "", False, ""))
+        provider, ref = key
         state = self._usage_state_cache.get(key)
         on_click = None
         if not active and email:
-            on_click = lambda: self._switch_account(provider, email)  # noqa: E731
+            on_click = lambda: self._switch_account(provider, ref)  # noqa: E731
         return ui.card_row(
             email, plan, active,
             ui.rows_for(state) if state else [],
             reason=getattr(state, "reason", None) if state else "reading\u2026",
             on_click=on_click,
+            org=org,
         )
 
     # -- polling ---------------------------------------------------------
@@ -316,19 +324,19 @@ class ClaudeSwitcherApp(rumps.App):
     def _show_accounts_window(self):
         self._accounts_window.show(
             sort_accounts(load_accounts(self.config_path)),
-            {p: self._live_active_email(p) for p in ("claude", "codex")},
+            {p: self._live_active_ref(p) for p in ("claude", "codex")},
             updater.current_version(),
         )
 
     def _refresh_accounts_window(self):
         self._accounts_window.rebuild(
             sort_accounts(load_accounts(self.config_path)),
-            {p: self._live_active_email(p) for p in ("claude", "codex")},
+            {p: self._live_active_ref(p) for p in ("claude", "codex")},
             updater.current_version(),
         )
 
-    def switch_from_window(self, provider, email):
-        self._switch_account(provider, email)
+    def switch_from_window(self, provider, ref):
+        self._switch_account(provider, ref)
 
     def add_from_window(self, provider):
         if provider == "claude":
@@ -336,8 +344,8 @@ class ClaudeSwitcherApp(rumps.App):
         else:
             self._on_add_codex_account(None)
 
-    def remove_from_window(self, provider, email):
-        self._remove_account(provider, email)
+    def remove_from_window(self, provider, ref):
+        self._remove_account(provider, ref)
 
     def _add_update_menu(self, parent):
         version = updater.current_version()
@@ -430,37 +438,56 @@ class ClaudeSwitcherApp(rumps.App):
         threading.Thread(target=_work, daemon=True).start()
 
     @staticmethod
-    def _is_row_active(email: str, live_email: str | None, recorded_active: bool) -> bool:
+    def _is_row_active(ref: str, live_ref: str | None, recorded_active: bool) -> bool:
         """Which row gets the filled dot.
 
         Extracted so it can be tested: inlined in the menu builder, dropping the
         live_email half still passed every test in the suite.
         """
-        if live_email:
-            return email == live_email
+        if live_ref:
+            return ref == live_ref
         return recorded_active
 
-    def _live_active_email(self, provider: str) -> str | None:
-        """Who is signed in right now, and repair our record when it disagrees.
+    def _live_active_ref(self, provider: str) -> str | None:
+        """Which saved account is signed in right now, and repair our record.
 
-        Reading `active` out of the config file made the selected-account dot lie
-        whenever anything signed in outside the app. Worse, the click handler used
-        the same record to decide "you are already on this account" and returned
-        without doing anything, so the wrong row was marked and the right row was
-        unclickable. Both now follow the live credentials.
+        Reading `active` out of the config file made the selected-account marker
+        lie whenever anything signed in outside the app, and the click handler
+        used the same record to decide "you are already on this one" - so the
+        wrong row was marked and the right row did nothing.
+
+        The address alone is not enough to resolve it: a team seat and a
+        personal plan can share one, so the organisation decides between them
+        when ~/.claude.json records it.
         """
         try:
-            email = live_claude_email() if provider == "claude" else live_codex_email()
+            if provider == "claude":
+                email, org = live_claude_email(), live_claude_org()
+            else:
+                email, org = live_codex_email(), None
         except Exception:
             return None
         if not email:
             return None
+
+        candidates = [
+            a for a in load_accounts(self.config_path)
+            if a.provider == provider and a.email == email
+        ]
+        match = None
+        if org:
+            match = next((a for a in candidates if a.org_uuid == org), None)
+        if match is None:
+            match = next((a for a in candidates if not a.org_uuid), None)
+        if match is None and len(candidates) == 1:
+            match = candidates[0]
+        if match is None:
+            return None
+
         recorded = get_active_account(self.config_path, provider=provider)
-        if (recorded.email if recorded else None) != email:
-            if any(a.email == email and a.provider == provider
-                   for a in load_accounts(self.config_path)):
-                set_active_account(email, self.config_path, provider=provider)
-        return email
+        if (recorded.ref if recorded else None) != match.ref:
+            set_active_account(match.ref, self.config_path, provider=provider)
+        return match.ref
 
     def _add_auto_switch_menu(self, parent):
         settings = load_settings(self.config_path)
@@ -484,15 +511,14 @@ class ClaudeSwitcherApp(rumps.App):
 
     def _has_credentials(self, account) -> bool:
         service = (
-            f"claude-switcher:{account.email}"
+            snapshot_service(account.ref)
             if account.provider == "claude"
             else f"codex-switcher:{account.email}"
         )
         return keychain.read_credentials(service) is not None
 
-    def _switch_account(self, provider: str, email: str):
-        live_email = self._live_active_email(provider)
-        if live_email == email:
+    def _switch_account(self, provider: str, ref: str):
+        if self._live_active_ref(provider) == ref:
             return
         if provider in self._switch_in_progress:
             rumps.notification(
@@ -509,9 +535,9 @@ class ClaudeSwitcherApp(rumps.App):
             expired = False
             try:
                 if provider == "claude":
-                    switch_account(email, self.config_path)
+                    switch_account(ref, self.config_path)
                 else:
-                    switch_codex_account(email, self.config_path)
+                    switch_codex_account(ref, self.config_path)
             except Exception as exc:
                 error = str(exc)
                 expired = is_expired_session(exc)
@@ -519,7 +545,7 @@ class ClaudeSwitcherApp(rumps.App):
             def _finish():
                 self._switch_in_progress.discard(provider)
                 if expired:
-                    self._handle_expired_session(provider, email)
+                    self._handle_expired_session(provider, ref)
                     return
                 if error:
                     rumps.alert(title="Error", message=error)
@@ -527,7 +553,7 @@ class ClaudeSwitcherApp(rumps.App):
                     rumps.notification(
                         title="Code Agent Switcher",
                         subtitle=f"{PROVIDER_LABELS[provider]} account switched",
-                        message=email,
+                        message=ref_email(ref),
                     )
                 self._rebuild_menu()
                 self._refresh_accounts_window()
@@ -537,7 +563,7 @@ class ClaudeSwitcherApp(rumps.App):
 
         threading.Thread(target=_switch, daemon=True).start()
 
-    def _handle_expired_session(self, provider: str, email: str) -> None:
+    def _handle_expired_session(self, provider: str, ref: str) -> None:
         """Offer the two things that actually fix a revoked sign-in.
 
         The old behaviour was a dead-end "Error" alert: the switch had silently
@@ -546,7 +572,7 @@ class ClaudeSwitcherApp(rumps.App):
         """
         choice = expired_session_action(
             rumps.alert(
-                title=EXPIRED_SESSION_TITLE.format(email=email),
+                title=EXPIRED_SESSION_TITLE.format(email=ref_email(ref)),
                 message=EXPIRED_SESSION_MESSAGE,
                 ok="Sign in again",
                 other="Remove account",
@@ -559,17 +585,18 @@ class ClaudeSwitcherApp(rumps.App):
             else:
                 self._on_add_codex_account(None)
         elif choice == "remove":
-            self._remove_account(provider, email)
+            self._remove_account(provider, ref)
         # "cancel" leaves the account in place; the previous session is untouched
         self._rebuild_menu()
 
-    def _remove_account(self, provider: str, email: str) -> None:
+    def _remove_account(self, provider: str, ref: str) -> None:
         """Drop a saved account, reporting a failure instead of doing nothing."""
+        email = ref_email(ref)
         try:
             if provider == "claude":
-                remove_saved_account(email, self.config_path)
+                remove_saved_account(ref, self.config_path)
             else:
-                remove_codex_account(email, self.config_path)
+                remove_codex_account(ref, self.config_path)
         except Exception as exc:
             rumps.alert(title="Could not remove account", message=f"{email}\n\n{exc}")
             return
@@ -799,7 +826,7 @@ class ClaudeSwitcherApp(rumps.App):
         target = choose_auto_switch_target(
             provider=provider,
             accounts=accounts,
-            active_email=active.email,
+            active_ref=active.ref,
             usage_by_account=self._usage_state_cache,
             has_credentials=self._has_credentials,
             threshold=settings.auto_switch_threshold,
@@ -892,18 +919,18 @@ class ClaudeSwitcherApp(rumps.App):
 
     def _on_remove_account(self, sender):
         """Remove a saved account."""
-        email = sender._email
+        ref = getattr(sender, "_ref", None) or sender._email
         provider = sender._provider
         active = get_active_account(self.config_path, provider=provider)
 
-        if active and active.email == email:
+        if active and active.ref == ref:
             rumps.alert(
                 title="Cannot remove",
                 message=f"You cannot remove the active {PROVIDER_LABELS[provider]} account. Switch first.",
             )
             return
 
-        self._remove_account(provider, email)
+        self._remove_account(provider, ref)
 
 
 def main():

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from code_agent_switcher import keychain
 from code_agent_switcher.usage_state import UsageState, UsageWindow
+from code_agent_switcher.core import snapshot_service
 
 USAGE_URL = "https://api.anthropic.com/oauth/usage"
 USAGE_TIMEOUT_SECONDS = 10
@@ -145,13 +146,13 @@ def fetch_usage(service: str) -> dict | None:
     return fetch_usage_detail(service)[0]
 
 
-def fetch_usage_for_account(email: str) -> dict | None:
-    """Fetch usage for a saved account by email."""
-    return fetch_usage(f"claude-switcher:{email}")
+def fetch_usage_for_account(ref: str) -> dict | None:
+    """Fetch usage for a saved account by its ref."""
+    return fetch_usage(snapshot_service(ref))
 
 
-def fetch_usage_detail_for_account(email: str) -> tuple[dict | None, str | None]:
-    return fetch_usage_detail(f"claude-switcher:{email}")
+def fetch_usage_detail_for_account(ref: str) -> tuple[dict | None, str | None]:
+    return fetch_usage_detail(snapshot_service(ref))
 
 
 def fetch_active_usage() -> dict | None:

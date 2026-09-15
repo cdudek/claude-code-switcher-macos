@@ -11,6 +11,8 @@ from urllib.request import Request, urlopen
 
 from code_agent_switcher import keychain
 from code_agent_switcher.config import (
+    find_account,
+    ref_email,
     AccountInfo,
     add_account,
     get_active_account,
@@ -22,6 +24,17 @@ from code_agent_switcher.config import (
 
 CLAUDE_SERVICE = keychain.CLAUDE_SERVICE
 CLAUDE_STATE_FILE = Path.home() / ".claude.json"
+CLAUDE_SNAPSHOT_PREFIX = "claude-switcher:"
+
+
+def snapshot_service(ref: str) -> str:
+    """The Keychain item holding one account's saved session.
+
+    Keyed by ref, not by email: one address can hold a team seat and a personal
+    plan, and naming both items after the address made the second overwrite the
+    first's tokens.
+    """
+    return f"{CLAUDE_SNAPSHOT_PREFIX}{ref}"
 
 CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
@@ -116,7 +129,7 @@ def _mcp_section(blob: str | None) -> dict:
     return mcp if isinstance(mcp, dict) else {}
 
 
-def _restore_mcp_oauth(preserved_mcp: dict, email: str, keychain_account: str) -> None:
+def _restore_mcp_oauth(preserved_mcp: dict, ref: str, keychain_account: str) -> None:
     """Put the machine's MCP tokens back after a logout/login cycle wiped them.
 
     `claude auth logout` plus the Keychain cleanup in add_new_account() delete
@@ -132,7 +145,7 @@ def _restore_mcp_oauth(preserved_mcp: dict, email: str, keychain_account: str) -
         return
     merged = _carry_over_mcp_oauth(live, json.dumps({"mcpOAuth": preserved_mcp}))
     keychain.write_credentials(CLAUDE_SERVICE, keychain_account, merged)
-    keychain.write_credentials(f"claude-switcher:{email}", keychain_account, merged)
+    keychain.write_credentials(snapshot_service(ref), keychain_account, merged)
 
 
 def refresh_claude_credentials(creds: str) -> str | None:
@@ -196,6 +209,19 @@ def _read_oauth_account() -> dict | None:
         return data.get("oauthAccount")
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
+
+
+def live_claude_org() -> str | None:
+    """The organisation the live session belongs to, when ~/.claude.json says.
+
+    One address can hold a team seat and a personal plan; the address alone does
+    not say which of them is signed in.
+    """
+    account = _read_oauth_account()
+    if not isinstance(account, dict):
+        return None
+    org = account.get("organizationUuid")
+    return org if isinstance(org, str) and org else None
 
 
 def live_claude_email() -> str | None:
@@ -307,8 +333,6 @@ def import_current_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountIn
         org_name = ""
 
     _validate_email(email)
-    keychain.write_credentials(f"claude-switcher:{email}", acct_attr, creds)
-
     oauth_account = _read_oauth_account()
 
     account = AccountInfo(
@@ -320,12 +344,17 @@ def import_current_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountIn
         oauth_account=oauth_account,
         provider="claude",
     )
+    # add_account assigns the slot, so the snapshot has to be written after it:
+    # a second organisation on the same address gets its own Keychain item
+    # rather than writing over the first one's tokens.
     add_account(account, config_path)
-    set_active_account(email, config_path, provider="claude")
+    account = find_account(load_accounts(config_path), "claude", account.ref) or account
+    keychain.write_credentials(snapshot_service(account.ref), acct_attr, creds)
+    set_active_account(account.ref, config_path, provider="claude")
     return account
 
 
-def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -> None:
+def switch_account(target_ref: str, config_path: Path = DEFAULT_CONFIG_PATH) -> None:
     """Switch to a different account. Saves current credentials first."""
     active = get_active_account(config_path)
 
@@ -335,7 +364,7 @@ def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -
         # Never overwrite a good snapshot with a half-written one
         if has_valid_tokens(live_creds):
             keychain.write_credentials(
-                f"claude-switcher:{active.email}", active.keychain_account, live_creds
+                snapshot_service(active.ref), active.keychain_account, live_creds
             )
         # Save current oauthAccount state from ~/.claude.json
         current_oauth = _read_oauth_account()
@@ -343,8 +372,9 @@ def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -
             active.oauth_account = current_oauth
             add_account(active, config_path)
 
+    target_email = ref_email(target_ref)
     _validate_email(target_email)
-    target_creds = keychain.read_credentials(f"claude-switcher:{target_email}")
+    target_creds = keychain.read_credentials(snapshot_service(target_ref))
     if not target_creds:
         raise RuntimeError(f"Credentials not found in Keychain for {target_email}")
     if not has_valid_tokens(target_creds):
@@ -354,9 +384,7 @@ def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -
         )
 
     accounts = load_accounts(config_path)
-    target_account = next(
-        (a for a in accounts if a.email == target_email and a.provider == "claude"), None
-    )
+    target_account = find_account(accounts, "claude", target_ref)
     if not target_account:
         raise RuntimeError(f"Account {target_email} not found in config")
 
@@ -366,7 +394,7 @@ def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -
     if refreshed:
         target_creds = refreshed
         keychain.write_credentials(
-            f"claude-switcher:{target_email}", target_account.keychain_account, refreshed
+            snapshot_service(target_ref), target_account.keychain_account, refreshed
         )
 
     target_creds = _carry_over_mcp_oauth(target_creds, live_creds)
@@ -376,7 +404,7 @@ def switch_account(target_email: str, config_path: Path = DEFAULT_CONFIG_PATH) -
     if target_account.oauth_account:
         _write_oauth_account(target_account.oauth_account)
 
-    set_active_account(target_email, config_path, provider="claude")
+    set_active_account(target_ref, config_path, provider="claude")
 
 
 def add_new_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | None:
@@ -389,7 +417,7 @@ def add_new_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | No
     if active:
         if has_valid_tokens(current_creds):
             keychain.write_credentials(
-                f"claude-switcher:{active.email}", active.keychain_account, current_creds
+                snapshot_service(active.ref), active.keychain_account, current_creds
             )
 
     # Deliberately NOT `claude auth logout`. Logout revokes the outgoing account's
@@ -405,7 +433,7 @@ def add_new_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | No
 
     if not run_auth_login():
         if active:
-            prev_creds = keychain.read_credentials(f"claude-switcher:{active.email}")
+            prev_creds = keychain.read_credentials(snapshot_service(active.ref))
             if has_valid_tokens(prev_creds):
                 keychain.write_credentials(CLAUDE_SERVICE, active.keychain_account, prev_creds)
         return None
@@ -413,18 +441,18 @@ def add_new_account(config_path: Path = DEFAULT_CONFIG_PATH) -> AccountInfo | No
     try:
         account = import_current_account(config_path)
         if account:
-            _restore_mcp_oauth(preserved_mcp, account.email, account.keychain_account)
+            _restore_mcp_oauth(preserved_mcp, account.ref, account.keychain_account)
         return account
     except Exception:
         # Login succeeded but import failed — restore previous account
         if active:
-            prev_creds = keychain.read_credentials(f"claude-switcher:{active.email}")
+            prev_creds = keychain.read_credentials(snapshot_service(active.ref))
             if has_valid_tokens(prev_creds):
                 keychain.write_credentials(CLAUDE_SERVICE, active.keychain_account, prev_creds)
         return None
 
 
-def remove_saved_account(email: str, config_path: Path = DEFAULT_CONFIG_PATH) -> None:
+def remove_saved_account(ref: str, config_path: Path = DEFAULT_CONFIG_PATH) -> None:
     """Remove a saved account from config and Keychain."""
-    keychain.delete_credentials(f"claude-switcher:{email}")
-    remove_account(email, config_path)
+    keychain.delete_credentials(snapshot_service(ref))
+    remove_account(ref, config_path)

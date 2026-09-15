@@ -37,8 +37,11 @@ RESET_IMMINENT_MINUTES = 10.0
 
 
 def account_key(account: AccountInfo) -> AccountKey:
-    """Return the stable cache key for an account."""
-    return (account.provider, account.email)
+    """Return the stable cache key for an account.
+
+    Keyed by ref, not email: two accounts can share an address.
+    """
+    return (account.provider, account.ref)
 
 
 def should_auto_switch(active_usage: UsageState, enabled: bool, threshold: float) -> bool:
@@ -102,7 +105,7 @@ def tokens_left(
 def choose_auto_switch_target(
     provider: str,
     accounts: list[AccountInfo],
-    active_email: str,
+    active_ref: str,
     usage_by_account: dict[AccountKey, UsageState],
     has_credentials: Callable[[AccountInfo], bool],
     threshold: float = 100.0,
@@ -114,7 +117,7 @@ def choose_auto_switch_target(
         account
         for account in accounts
         if account.provider == provider
-        and account.email != active_email
+        and account.ref != active_ref
         and has_credentials(account)
     ]
 

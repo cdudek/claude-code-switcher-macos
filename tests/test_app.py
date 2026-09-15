@@ -81,24 +81,28 @@ class TestExpiredSessionCopy:
 
 
 class _Stub:
-    """Just enough of the app to call _live_active_email unbound."""
+    """Just enough of the app to call _live_active_ref unbound."""
     config_path = "/nowhere/accounts.json"
 
 
 class TestLiveActiveEmail:
     """The selected-account dot follows the live sign-in, not our own record."""
 
-    def _run(self, monkeypatch, *, live, recorded, saved):
+    def _run(self, monkeypatch, *, live, recorded, saved, live_org="", orgs=None):
         import code_agent_switcher.app as app
         written = []
+        orgs = orgs or {}
         monkeypatch.setattr(app, "live_claude_email", lambda: live)
+        monkeypatch.setattr(app, "live_claude_org", lambda: live_org or None)
         monkeypatch.setattr(app, "get_active_account",
                             lambda path, provider: _Account(recorded) if recorded else None)
         monkeypatch.setattr(app, "load_accounts",
-                            lambda path: [_Account(e) for e in saved])
+                            lambda path: [_Account(e, org_uuid=orgs.get(i, ""),
+                                                   slot=orgs.get(i, ""))
+                                          for i, e in enumerate(saved)])
         monkeypatch.setattr(app, "set_active_account",
                             lambda email, path, provider: written.append(email))
-        result = app.ClaudeSwitcherApp._live_active_email(_Stub(), "claude")
+        result = app.ClaudeSwitcherApp._live_active_ref(_Stub(), "claude")
         return result, written
 
     def test_live_sign_in_wins_over_the_record(self, monkeypatch):
@@ -116,10 +120,12 @@ class TestLiveActiveEmail:
                                saved=["a@x.com"])
         assert written == []
 
-    def test_unsaved_live_account_is_not_written_to_the_record(self, monkeypatch):
+    def test_a_live_account_we_do_not_hold_matches_no_row(self, monkeypatch):
+        """Nothing to mark and nothing to record: a ref must name a saved
+        account or it means nothing downstream."""
         result, written = self._run(monkeypatch, live="stranger@x.com", recorded="a@x.com",
                                     saved=["a@x.com"])
-        assert result == "stranger@x.com"
+        assert result is None
         assert written == []
 
     def test_unreadable_live_state_falls_back_to_the_record(self, monkeypatch):
@@ -130,9 +136,15 @@ class TestLiveActiveEmail:
 
 
 class _Account:
-    def __init__(self, email, provider="claude"):
+    def __init__(self, email, provider="claude", slot="", org_uuid=""):
         self.email = email
         self.provider = provider
+        self.slot = slot
+        self.org_uuid = org_uuid
+
+    @property
+    def ref(self):
+        return f"{self.email}#{self.slot}" if self.slot else self.email
 
 
 class TestIsRowActive:

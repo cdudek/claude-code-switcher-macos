@@ -26,6 +26,48 @@ class AccountInfo:
     keychain_account: str
     oauth_account: dict | None = None
     provider: str = "claude"
+    # One email can hold a team seat and a personal plan in different
+    # organisations, and the CLI treats those as two sessions with two token
+    # pairs. The email alone is therefore not an identity. `slot` disambiguates:
+    # empty for the first account saved on an address - which keeps its historic
+    # `claude-switcher:<email>` Keychain item untouched - and the organisation's
+    # uuid for any later one. Nothing on an existing machine moves.
+    slot: str = ""
+
+    @property
+    def ref(self) -> str:
+        """The identity used for the Keychain item and everywhere in the app."""
+        return f"{self.email}#{self.slot}" if self.slot else self.email
+
+    @property
+    def org_uuid(self) -> str:
+        account = self.oauth_account or {}
+        value = account.get("organizationUuid") if isinstance(account, dict) else None
+        return value if isinstance(value, str) else ""
+
+
+def ref_email(ref: str) -> str:
+    """The address part of a ref, for display and for validation."""
+    return ref.split("#", 1)[0]
+
+
+def assign_slot(account: AccountInfo, existing: list[AccountInfo]) -> str:
+    """The slot a new account should take.
+
+    First account on an address keeps the bare email, so every install that
+    exists today is untouched. A second account on the same address in a
+    different organisation takes that organisation's uuid.
+    """
+    same_address = [
+        a for a in existing
+        if a.provider == account.provider and a.email == account.email
+    ]
+    if not same_address:
+        return ""
+    for other in same_address:
+        if other.org_uuid == account.org_uuid:
+            return other.slot  # the same account again; keep where it lives
+    return account.org_uuid or "personal"
 
 
 @dataclass
@@ -122,21 +164,33 @@ def save_accounts(accounts: list[AccountInfo], path: Path = DEFAULT_CONFIG_PATH)
 
 
 def add_account(account: AccountInfo, path: Path = DEFAULT_CONFIG_PATH) -> None:
-    """Add or update an account, matched by email and provider."""
+    """Add or update an account, matched by address AND organisation.
+
+    Matching on the address alone is what made a team seat and a personal plan
+    on one email replace each other.
+    """
     accounts = load_accounts(path)
+    if not account.slot:
+        account.slot = assign_slot(account, accounts)
     accounts = [
         a for a in accounts
-        if not (a.email == account.email and a.provider == account.provider)
+        if not (a.provider == account.provider and a.ref == account.ref)
     ]
     accounts.append(account)
     save_accounts(accounts, path)
 
 
-def remove_account(email: str, path: Path = DEFAULT_CONFIG_PATH, provider: str = "claude") -> None:
-    """Remove an account by email and provider."""
+def remove_account(ref: str, path: Path = DEFAULT_CONFIG_PATH, provider: str = "claude") -> None:
+    """Remove one account by ref and provider."""
     accounts = load_accounts(path)
-    accounts = [a for a in accounts if not (a.email == email and a.provider == provider)]
+    accounts = [a for a in accounts if not (a.ref == ref and a.provider == provider)]
     save_accounts(accounts, path)
+
+
+def find_account(
+    accounts: list[AccountInfo], provider: str, ref: str
+) -> AccountInfo | None:
+    return next((a for a in accounts if a.provider == provider and a.ref == ref), None)
 
 
 # Work plans first, then personal, then whatever we do not recognise. The app
@@ -184,13 +238,13 @@ def get_active_account(
 
 
 def set_active_account(
-    email: str, path: Path = DEFAULT_CONFIG_PATH, provider: str = "claude"
+    ref: str, path: Path = DEFAULT_CONFIG_PATH, provider: str = "claude"
 ) -> None:
     """Set an account active within a provider, deactivating only that provider."""
     accounts = load_accounts(path)
     for acc in accounts:
         if acc.provider == provider:
-            acc.active = (acc.email == email)
+            acc.active = (acc.ref == ref)
     save_accounts(accounts, path)
 
 

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="128" y1="128" x2="896" y2="896" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#581C87"/>
+      <stop offset="0.5" stop-color="#E11D48"/>
+      <stop offset="1" stop-color="#FB923C"/>
+    </linearGradient>
+  </defs>
+  <rect x="72" y="72" width="880" height="880" rx="208" fill="url(#bg)"/>
+  <!-- Two offset angles preserve the original interlocking mark. -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="96" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M601 345 761 505 601 665 441 505" opacity="0.42"/>
+    <path d="M430 336 254 512 430 688"/>
+  </g>
+</svg>

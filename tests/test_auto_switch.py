@@ -158,7 +158,7 @@ class TestTargetChoice:
         accounts = accounts or [_acct("active@x.com"), _acct("a@x.com"), _acct("b@x.com")]
         usage = {("claude", email): state for email, state in states.items()}
         return choose_auto_switch_target(
-            provider="claude", accounts=accounts, active_email="active@x.com",
+            provider="claude", accounts=accounts, active_ref="active@x.com",
             usage_by_account=usage, has_credentials=lambda a: True,
             threshold=threshold, per_point=rates, now=NOW,
         )

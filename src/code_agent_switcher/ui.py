@@ -231,7 +231,7 @@ RADIO_WIDTH = 20.0
 
 
 def account_card(email: str, plan: str, active: bool, rows, reason: str | None = None,
-                 on_click=None) -> AppKit.NSView:
+                 on_click=None, org: str = "") -> AppKit.NSView:
     """One account: identity on top, a bar per limit window under it.
 
     `rows` is a sequence of (label, percent, resets_in or None). An account with
@@ -278,10 +278,13 @@ def account_card(email: str, plan: str, active: bool, rows, reason: str | None =
     name.setFrame_(NSMakeRect(left, top, frame.size.width, frame.size.height))
     card.addSubview_(name)
 
-    if plan:
-        width = pill_width(plan)
+    # Two accounts on one address read as duplicates unless the organisation is
+    # on the row, so it joins the plan in the pill when there is a clash.
+    badge = f"{plan} \u00b7 {org}" if plan and org else (org or plan)
+    if badge:
+        width = pill_width(badge)
         pill = PillView.alloc().initWithFrame_text_(
-            NSMakeRect(left + frame.size.width + 8, top + 1, width, 16), plan
+            NSMakeRect(left + frame.size.width + 8, top + 1, width, 16), badge
         )
         card.addSubview_(pill)
 
@@ -392,9 +395,9 @@ def set_symbol(item, name: str) -> None:
 
 
 def card_row(email: str, plan: str, active: bool, rows, reason: str | None = None,
-             on_click=None) -> AppKit.NSView:
+             on_click=None, org: str = "") -> AppKit.NSView:
     """A card in a full-width wrapper: side padding, and a gap below it."""
-    card = account_card(email, plan, active, rows, reason, on_click=on_click)
+    card = account_card(email, plan, active, rows, reason, on_click=on_click, org=org)
     if on_click is not None:
         card.setOnClick_(on_click)
     height = card.frame().size.height

@@ -8,6 +8,8 @@ place and the decision in another.
 
 from __future__ import annotations
 
+from collections import Counter
+
 import AppKit
 import objc
 from Foundation import NSMakeRect
@@ -24,12 +26,12 @@ PROVIDER_LABELS = {"claude": "Claude Code", "codex": "Codex CLI"}
 class _RowActions(AppKit.NSObject):
     """Target for the per-row menu. Kept alive by the window controller."""
 
-    def initWithController_email_provider_active_(self, controller, email, provider, active):
+    def initWithController_email_provider_active_(self, controller, ref, provider, active):
         self = objc.super(_RowActions, self).init()
         if self is None:
             return None
         self._controller = controller
-        self._email = email
+        self._ref = ref
         self._provider = provider
         self._active = active
         return self
@@ -48,7 +50,7 @@ class _RowActions(AppKit.NSObject):
         self._controller.addAccount(self._provider)
 
     def remove_(self, _):
-        self._controller.removeAccount(self._provider, self._email)
+        self._controller.removeAccount(self._provider, self._ref)
 
 
 class _AddAction(AppKit.NSObject):
@@ -171,10 +173,12 @@ class AccountsWindowController:
             )
             content.addSubview_(group)
 
+            shared_address = Counter(a.email for a in rows)
             row_y = group_height - ROW_HEIGHT
             for account in rows:
                 self._add_row(group, account, row_y,
-                              live_active.get(provider) == account.email)
+                              live_active.get(provider) == account.ref,
+                              shared=shared_address[account.email] > 1)
                 row_y -= ROW_HEIGHT
             self._add_add_row(group, provider, row_y)
             y -= group_height + GROUP_PAD * 2
@@ -196,7 +200,7 @@ class AccountsWindowController:
         self.window.setContentSize_(AppKit.NSMakeSize(WIDTH, height))
         self.window.setContentView_(content)
 
-    def _add_row(self, group, account, y, is_active) -> None:
+    def _add_row(self, group, account, y, is_active, shared: bool = False) -> None:
         """Identity, plan, and a menu. No selector.
 
         Choosing an account happens in the menu bar panel, where the usage that
@@ -214,6 +218,8 @@ class AccountsWindowController:
         group.addSubview_(name)
 
         plan = account.subscription_type or ""
+        if shared and account.org_name:
+            plan = f"{plan} \u00b7 {account.org_name}" if plan else account.org_name
         if plan:
             width = pill_width(plan)
             pill = PillView.alloc().initWithFrame_text_(
@@ -230,7 +236,7 @@ class AccountsWindowController:
             group.addSubview_(tag)
 
         actions = _RowActions.alloc().initWithController_email_provider_active_(
-            self, account.email, account.provider, is_active
+            self, account.ref, account.provider, is_active
         )
         self._keep_alive.append(actions)
         button = AppKit.NSButton.alloc().initWithFrame_(

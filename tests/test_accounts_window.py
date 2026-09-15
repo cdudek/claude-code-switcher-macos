@@ -12,10 +12,16 @@ from code_agent_switcher.accounts_window import AccountsWindowController
 
 
 class _Account:
-    def __init__(self, email, plan, provider):
+    def __init__(self, email, plan, provider, slot="", org_name=""):
         self.email = email
         self.subscription_type = plan
         self.provider = provider
+        self.slot = slot
+        self.org_name = org_name
+
+    @property
+    def ref(self):
+        return f"{self.email}#{self.slot}" if self.slot else self.email
 
 
 def _walk(view, out):
