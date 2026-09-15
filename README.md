@@ -152,6 +152,15 @@ many claude.ai connectors that account has, and a card you are about to switch
 to says what the move costs — `Switching drops Linear, Slack +2` — before you
 click it.
 
+**The browser has to be signed in as the same account.** Connecting anything —
+a claude.ai connector or your own MCP server — finishes in a browser, and the
+pending record belongs to the account Claude Code is signed in as. If the
+browser is on a different account the callback cannot find it and Anthropic
+answers `{"type":"not_found_error","message":"Server not found"}`. The error
+names neither account, so it reads like a broken server. It is not: check which
+account the browser is on first. An SSO-managed browser session that can only
+sign in as one address is the common way to hit this.
+
 Two ways to stop a connector breaking, and they are different trades:
 
 1. **Authorise it on each account.** Sign in as the other account, open
