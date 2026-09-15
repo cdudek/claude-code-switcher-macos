@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Claude Switcher as a standalone macOS .app
+# Build Code Agent Switcher as a standalone macOS .app
 #
 # py2app chokes if pyproject.toml has dependencies (it treats them as
 # install_requires, which it no longer supports). Workaround: temporarily
@@ -14,7 +14,7 @@ if [ -d .venv ]; then
     source .venv/bin/activate
 fi
 
-echo "Building Claude Switcher.app..."
+echo "Building Code Agent Switcher.app..."
 
 # Hide pyproject.toml so py2app doesn't read dependencies from it
 mv pyproject.toml pyproject.toml.bak
@@ -27,6 +27,6 @@ rm -rf build dist
 python3 setup.py py2app
 
 echo ""
-echo "Done! App is at: dist/Claude Switcher.app"
+echo "Done! App is at: dist/Code Agent Switcher.app"
 echo "You can copy it to /Applications:"
-echo "  cp -r 'dist/Claude Switcher.app' /Applications/"
+echo "  cp -r 'dist/Code Agent Switcher.app' /Applications/"

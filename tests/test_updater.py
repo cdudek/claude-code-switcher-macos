@@ -26,7 +26,7 @@ from claude_switcher.updater import (
     swap_script,
 )
 
-GOOD_URL = f"https://github.com/{REPO}/releases/download/v9.9.9/Claude-Switcher-v9.9.9.zip"
+GOOD_URL = f"https://github.com/{REPO}/releases/download/v9.9.9/Code-Agent-Switcher-v9.9.9.zip"
 
 
 class TestVersionCompare:
@@ -97,7 +97,7 @@ class TestAssetSelection:
         assert _asset_url(release) is None
 
 
-def _plist(executable: str | None = "Claude Switcher") -> bytes:
+def _plist(executable: str | None = "Code Agent Switcher") -> bytes:
     import plistlib
     return plistlib.dumps({"CFBundleExecutable": executable} if executable else {})
 
@@ -114,8 +114,8 @@ def _zip(entries: dict[str, bytes], executable: tuple[str, ...] = ()) -> bytes:
     return buf.getvalue()
 
 
-APP = "Claude Switcher.app"
-EXE = f"{APP}/Contents/MacOS/Claude Switcher"
+APP = "Code Agent Switcher.app"
+EXE = f"{APP}/Contents/MacOS/Code Agent Switcher"
 
 
 def _good_app(**overrides) -> bytes:
@@ -137,14 +137,14 @@ class TestDownloadValidation:
     def test_unpacks_a_good_archive(self, mock_open, tmp_path):
         mock_open.return_value = self._serve(_good_app())
         app = download_update(GOOD_URL, tmp_path)
-        assert app.name == "Claude Switcher.app"
+        assert app.name == "Code Agent Switcher.app"
         assert (app / "Contents" / "Info.plist").is_file()
 
     @patch("claude_switcher.updater.urlopen")
     def test_rejects_a_zip_that_escapes_its_directory(self, mock_open, tmp_path):
         """Zip slip: an entry naming ../ would overwrite files outside the staging dir."""
         mock_open.return_value = self._serve(_zip({
-            "Claude Switcher.app/Contents/Info.plist": _plist(),
+            "Code Agent Switcher.app/Contents/Info.plist": _plist(),
             "../../../../tmp/pwned": b"x",
         }))
         with pytest.raises(ValueError, match="unsafe path"):
@@ -168,7 +168,7 @@ class TestDownloadValidation:
 
     @patch("claude_switcher.updater.urlopen")
     def test_rejects_an_app_without_an_info_plist(self, mock_open, tmp_path):
-        mock_open.return_value = self._serve(_zip({"Claude Switcher.app/Contents/MacOS/x": b"b"}))
+        mock_open.return_value = self._serve(_zip({"Code Agent Switcher.app/Contents/MacOS/x": b"b"}))
         with pytest.raises(ValueError, match="Info.plist"):
             download_update(GOOD_URL, tmp_path)
 
@@ -183,9 +183,9 @@ class TestDownloadValidation:
     def test_ignores_the_macosx_metadata_folder(self, mock_open, tmp_path):
         """macOS' own zip writes __MACOSX/ alongside the real bundle."""
         mock_open.return_value = self._serve(_good_app(entries={
-            "__MACOSX/Claude Switcher.app/Contents/Info.plist": b"junk",
+            "__MACOSX/Code Agent Switcher.app/Contents/Info.plist": b"junk",
         }))
-        assert download_update(GOOD_URL, tmp_path).name == "Claude Switcher.app"
+        assert download_update(GOOD_URL, tmp_path).name == "Code Agent Switcher.app"
 
 
 class TestCheckForUpdate:
@@ -275,8 +275,8 @@ class TestSwapScript:
         return sp.run(["/bin/bash", str(script)], env=env, capture_output=True, text=True, timeout=60)
 
     def test_replaces_the_installed_app(self, tmp_path):
-        staged = self._bundle(tmp_path / "stage", "Claude Switcher.app", "0.5.0")
-        target = self._bundle(tmp_path / "apps", "Claude Switcher.app", "0.4.3")
+        staged = self._bundle(tmp_path / "stage", "Code Agent Switcher.app", "0.5.0")
+        target = self._bundle(tmp_path / "apps", "Code Agent Switcher.app", "0.4.3")
         from claude_switcher.updater import backup_path
         backup = backup_path(target)
         log = tmp_path / "swap.log"
@@ -291,8 +291,8 @@ class TestSwapScript:
 
     def test_works_when_nothing_is_installed_yet(self, tmp_path):
         """`set -e` with `[ -d x ] && mv` used to exit here and install nothing."""
-        staged = self._bundle(tmp_path / "stage", "Claude Switcher.app", "0.5.0")
-        target = tmp_path / "apps" / "Claude Switcher.app"
+        staged = self._bundle(tmp_path / "stage", "Code Agent Switcher.app", "0.5.0")
+        target = tmp_path / "apps" / "Code Agent Switcher.app"
         target.parent.mkdir()
         log = tmp_path / "swap.log"
 
@@ -303,8 +303,8 @@ class TestSwapScript:
 
     def test_restores_the_previous_version_when_the_copy_fails(self, tmp_path):
         """A staged app that has vanished must not cost the user the working one."""
-        staged = tmp_path / "stage" / "Claude Switcher.app"   # never created
-        target = self._bundle(tmp_path / "apps", "Claude Switcher.app", "0.4.3")
+        staged = tmp_path / "stage" / "Code Agent Switcher.app"   # never created
+        target = self._bundle(tmp_path / "apps", "Code Agent Switcher.app", "0.4.3")
         from claude_switcher.updater import backup_path
         backup = backup_path(target)
         log = tmp_path / "swap.log"
@@ -315,8 +315,8 @@ class TestSwapScript:
         assert "0.4.3" in (target / "Contents" / "Info.plist").read_text()
 
     def test_writes_a_log(self, tmp_path):
-        staged = self._bundle(tmp_path / "stage", "Claude Switcher.app", "0.5.0")
-        target = self._bundle(tmp_path / "apps", "Claude Switcher.app", "0.4.3")
+        staged = self._bundle(tmp_path / "stage", "Code Agent Switcher.app", "0.5.0")
+        target = self._bundle(tmp_path / "apps", "Code Agent Switcher.app", "0.4.3")
         log = tmp_path / "swap.log"
         self._run(staged, target, __import__("claude_switcher.updater", fromlist=["x"]).backup_path(target), log, tmp_path)
         assert log.is_file() and "installed ok" in log.read_text()
@@ -327,13 +327,13 @@ class TestBackupPath:
 
     def test_is_hidden_from_finder(self):
         from claude_switcher.updater import backup_path
-        b = backup_path(Path("/Applications/Claude Switcher.app"))
+        b = backup_path(Path("/Applications/Code Agent Switcher.app"))
         assert b.name.startswith("."), f"{b.name} would be visible in /Applications"
 
     def test_sits_beside_the_target(self):
         """Restoring must be a rename on one filesystem, not a copy across two."""
         from claude_switcher.updater import backup_path
-        t = Path("/Applications/Claude Switcher.app")
+        t = Path("/Applications/Code Agent Switcher.app")
         assert backup_path(t).parent == t.parent
 
     def test_names_the_app_it_backs_up(self):
@@ -357,7 +357,7 @@ class TestUnpackedBundleMustBeLaunchable:
     def test_the_executable_bit_survives_unpacking(self, mock_open, tmp_path):
         mock_open.return_value = self._serve(_good_app())
         app = download_update(GOOD_URL, tmp_path)
-        exe = app / "Contents" / "MacOS" / "Claude Switcher"
+        exe = app / "Contents" / "MacOS" / "Code Agent Switcher"
         assert os.access(exe, os.X_OK)
 
     @patch("claude_switcher.updater.urlopen")

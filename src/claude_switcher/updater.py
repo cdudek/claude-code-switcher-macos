@@ -29,9 +29,9 @@ from urllib.request import Request, urlopen
 
 from claude_switcher import __version__
 
-REPO = "cdudek/claude-code-switcher-macos"
+REPO = "cdudek/code-agent-switcher"
 RELEASES_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
-APP_NAME = "Claude Switcher.app"
+APP_NAME = "Code Agent Switcher.app"
 NETWORK_TIMEOUT = 30
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 
@@ -268,7 +268,7 @@ echo "done"
 def backup_path(target: Path) -> Path:
     """Where the outgoing version is kept so a bad update can be rolled back.
 
-    Leading dot: Finder hides it. A visible "Claude Switcher.app.previous" next
+    Leading dot: Finder hides it. A visible "Code Agent Switcher.app.previous" next
     to the app after every update looks like a failed install. It sits beside the
     target rather than in the Trash so restoring it is a rename on the same
     filesystem, which cannot half-fail the way a cross-device copy can.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the drag-to-Applications disk image from dist/Claude Switcher.app.
+# Build the drag-to-Applications disk image from dist/Code Agent Switcher.app.
 #
 # The window is laid out by AppleScript against a background image: app on the
 # left, an alias to /Applications on the right, an arrow between them. That is
@@ -11,10 +11,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="dist/Claude Switcher.app"
-VOL="Claude Switcher"
+APP="dist/Code Agent Switcher.app"
+VOL="Code Agent Switcher"
 if [ "${1:-}" = "--capture" ]; then CAPTURE=1; shift; fi
-OUT="${1:-dist/Claude-Switcher.dmg}"
+OUT="${1:-dist/Code-Agent-Switcher.dmg}"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
@@ -22,7 +22,7 @@ trap 'rm -rf "$STAGE"' EXIT
 
 echo "Staging"
 mkdir -p "$STAGE/.background"
-ditto "$APP" "$STAGE/Claude Switcher.app"
+ditto "$APP" "$STAGE/Code Agent Switcher.app"
 ln -s /Applications "$STAGE/Applications"
 # A symlink to Terminal, for the same reason the Applications alias is one: it is
 # not a downloaded file, so Gatekeeper has nothing to quarantine and double-click
@@ -36,12 +36,12 @@ cp resources/dmg-background.png "$STAGE/.background/background.png"
 # "Open Anyway.command" that simply did not run. This file plus the Terminal
 # alias next to it replace it.
 cat > "$STAGE/How to open this.txt" <<'TXTEOF'
-Claude Switcher - first launch
+Code Agent Switcher - first launch
 ==============================
 
 Drag the app into Applications, then run this once:
 
-    xattr -dr com.apple.quarantine "/Applications/Claude Switcher.app"
+    xattr -dr com.apple.quarantine "/Applications/Code Agent Switcher.app"
 
 Terminal is sitting right next to this file in the disk image. Double-click it,
 paste the line, open the app.
@@ -60,8 +60,8 @@ after a blocked attempt.
 
 Build it yourself and none of this applies, because nothing downloaded it:
 
-    git clone https://github.com/cdudek/claude-code-switcher-macos.git
-    cd claude-code-switcher-macos && ./install.sh
+    git clone https://github.com/cdudek/code-agent-switcher.git
+    cd code-agent-switcher && ./install.sh
 
 
 The app runs in the menu bar, not the Dock. Look for the brackets icon top right.
@@ -96,9 +96,9 @@ if [ "${CAPTURE:-0}" != "1" ] && [ -f "$DS" ]; then
 else
 
 echo "Laying out the window"
-# Target the volume by the name it actually got. If a "Claude Switcher" image is
+# Target the volume by the name it actually got. If a "Code Agent Switcher" image is
 # already mounted - a released DMG the user opened, say - this one mounts as
-# "Claude Switcher 1", and a hardcoded name lays out somebody else's window.
+# "Code Agent Switcher 1", and a hardcoded name lays out somebody else's window.
 osascript - "$(basename "$MOUNT")" <<'APPLESCRIPT'
 on run argv
 tell application "Finder"
@@ -113,7 +113,7 @@ tell application "Finder"
     set icon size of opts to 80
     set text size of opts to 13
     set background picture of opts to file ".background:background.png"
-    set position of item "Claude Switcher.app" of container window to {196, 196}
+    set position of item "Code Agent Switcher.app" of container window to {196, 196}
     set position of item "Applications" of container window to {500, 196}
     set position of item "How to open this.txt" of container window to {196, 404}
     set position of item "Terminal" of container window to {500, 404}

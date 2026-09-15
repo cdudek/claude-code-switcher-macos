@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Claude Switcher from this checkout and install it into /Applications.
+# Build Code Agent Switcher from this checkout and install it into /Applications.
 #
 # Building locally sidesteps Gatekeeper entirely: the quarantine flag is set by
 # whatever DOWNLOADS a file, so an app you compiled yourself has never been
@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="Claude Switcher.app"
+APP="Code Agent Switcher.app"
 TARGET="/Applications/$APP"
 PY="${PYTHON:-}"
 
@@ -47,13 +47,13 @@ say "Building $APP"
 
 if pgrep -f "$APP" >/dev/null; then
   say "Quitting the running copy"
-  osascript -e 'tell application "Claude Switcher" to quit' 2>/dev/null || true
+  osascript -e 'tell application "Code Agent Switcher" to quit' 2>/dev/null || true
   for _ in $(seq 1 20); do pgrep -f "$APP" >/dev/null || break; sleep 0.3; done
   pkill -f "$APP" 2>/dev/null || true
 fi
 
 if [ -d "$TARGET" ]; then
-  BACKUP="$HOME/.Trash/Claude Switcher (replaced $(date +%Y-%m-%d-%H%M%S)).app"
+  BACKUP="$HOME/.Trash/Code Agent Switcher (replaced $(date +%Y-%m-%d-%H%M%S)).app"
   say "Moving the installed copy to the Trash"
   mv "$TARGET" "$BACKUP"
 fi
@@ -64,4 +64,4 @@ xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null || true
 
 say "Launching"
 open "$TARGET"
-say "Done. Claude Switcher $(./.venv/bin/python -c 'from claude_switcher import __version__;print(__version__)') is in your menu bar."
+say "Done. Code Agent Switcher $(./.venv/bin/python -c 'from claude_switcher import __version__;print(__version__)') is in your menu bar."

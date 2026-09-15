@@ -83,10 +83,14 @@ def _refresh_stored(service: str, creds: str) -> str | None:
     return refreshed
 
 
-def fetch_usage(service: str) -> dict | None:
-    """Fetch usage for a Keychain service. Returns parsed JSON or None on failure.
+def fetch_usage_detail(service: str) -> tuple[dict | None, str | None]:
+    """Fetch usage, and say why when there is none.
 
-    Response format:
+    The menu used to print a bare "Usage unavailable" for six different causes -
+    no saved credentials, a revoked sign-in, a rate limit, a timeout - which made
+    the one case that needs the user to act indistinguishable from a blip.
+
+    Response format on success:
         {
             "five_hour": {"utilization": 42.5, "resets_at": "..."},
             "seven_day": {"utilization": 18.3, "resets_at": "..."}
@@ -94,11 +98,11 @@ def fetch_usage(service: str) -> dict | None:
     """
     creds = keychain.read_credentials(service)
     if not creds:
-        return None
+        return None, "no saved sign-in"
 
     token = _extract_token(creds)
     if not token:
-        return None
+        return None, "saved sign-in has no token"
 
     if _is_expired(creds):
         creds = _refresh_stored(service, creds) or creds
@@ -106,19 +110,39 @@ def fetch_usage(service: str) -> dict | None:
 
     status, payload = _request_usage(token)
     if payload is not None:
-        return payload
+        return payload, None
     # Only 401 says the token is the problem. Refreshing on a network blip would
     # rotate the pair for nothing and throw away a refresh token that still works.
     if status != 401:
-        return None
+        return None, _status_reason(status)
 
     refreshed = _refresh_stored(service, creds)
     if not refreshed:
-        return None
+        return None, "signed out, sign in again"
     new_token = _extract_token(refreshed)
     if not new_token:
-        return None
-    return _request_usage(new_token)[1]
+        return None, "signed out, sign in again"
+    status, payload = _request_usage(new_token)
+    if payload is not None:
+        return payload, None
+    return None, _status_reason(status)
+
+
+def _status_reason(status: int) -> str:
+    if status == 0:
+        return "no answer from the API"
+    if status == 401:
+        return "signed out, sign in again"
+    if status == 429:
+        return "rate limited, try later"
+    if 500 <= status < 600:
+        return f"API error {status}"
+    return f"unexpected reply {status}"
+
+
+def fetch_usage(service: str) -> dict | None:
+    """Fetch usage for a Keychain service. Returns parsed JSON or None on failure."""
+    return fetch_usage_detail(service)[0]
 
 
 def fetch_usage_for_account(email: str) -> dict | None:
@@ -126,9 +150,17 @@ def fetch_usage_for_account(email: str) -> dict | None:
     return fetch_usage(f"claude-switcher:{email}")
 
 
+def fetch_usage_detail_for_account(email: str) -> tuple[dict | None, str | None]:
+    return fetch_usage_detail(f"claude-switcher:{email}")
+
+
 def fetch_active_usage() -> dict | None:
     """Fetch usage for the currently active Claude Code session."""
     return fetch_usage(keychain.CLAUDE_SERVICE)
+
+
+def fetch_active_usage_detail() -> tuple[dict | None, str | None]:
+    return fetch_usage_detail(keychain.CLAUDE_SERVICE)
 
 
 def _format_reset_delta(resets_at: str) -> str:
@@ -157,10 +189,10 @@ def _format_reset_delta(resets_at: str) -> str:
         return "?"
 
 
-def claude_usage_state(usage: dict | None) -> UsageState:
+def claude_usage_state(usage: dict | None, reason: str | None = None) -> UsageState:
     """Convert Claude usage data into a normalized usage state."""
     if not usage:
-        return UsageState(available=False, display="Usage unavailable")
+        return UsageState(available=False, display="Usage unavailable", reason=reason)
 
     parts = []
     windows = []
@@ -181,7 +213,8 @@ def claude_usage_state(usage: dict | None) -> UsageState:
         windows.append(UsageWindow(label=label, percent=percent, resets_in=reset))
 
     if not parts:
-        return UsageState(available=False, display="Usage unavailable")
+        return UsageState(available=False, display="Usage unavailable",
+                          reason=reason or "the API returned no windows")
 
     return UsageState(available=True, display=" | ".join(parts), windows=tuple(windows))
 

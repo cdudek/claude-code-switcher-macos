@@ -53,18 +53,18 @@ jobs:
         # but it gives the bundle a stable identity and stops macOS refusing it
         # outright on Apple silicon, which requires *some* signature.
         run: |
-          xattr -cr "dist/Claude Switcher.app"
-          codesign --force --deep --sign - "dist/Claude Switcher.app"
-          codesign --verify --verbose "dist/Claude Switcher.app"
+          xattr -cr "dist/Code Agent Switcher.app"
+          codesign --force --deep --sign - "dist/Code Agent Switcher.app"
+          codesign --verify --verbose "dist/Code Agent Switcher.app"
 
       - name: Package
         id: package
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          ZIP="Claude-Switcher-$TAG.zip"
-          DMG="Claude-Switcher-$TAG.dmg"
+          ZIP="Code-Agent-Switcher-$TAG.zip"
+          DMG="Code-Agent-Switcher-$TAG.dmg"
           # ditto keeps the bundle's symlinks and resource forks; `zip` does not.
-          ditto -c -k --sequesterRsrc --keepParent "dist/Claude Switcher.app" "$ZIP"
+          ditto -c -k --sequesterRsrc --keepParent "dist/Code Agent Switcher.app" "$ZIP"
           # The DMG is what a person downloads; the zip is what the in-app
           # updater fetches. It matches on .zip and refuses a release carrying
           # two of them, so never add a second zip here.
@@ -84,7 +84,7 @@ jobs:
           body: |
             ## Install
 
-            Download the **.dmg** and drag Claude Switcher into Applications.
+            Download the **.dmg** and drag Code Agent Switcher into Applications.
             (The `.zip` is what the in-app updater fetches — you do not need it.)
 
             **macOS will refuse to open it the first time** — this build is ad-hoc
@@ -92,7 +92,7 @@ jobs:
             account. Either run this once:
 
             ```bash
-            xattr -dr com.apple.quarantine "/Applications/Claude Switcher.app"
+            xattr -dr com.apple.quarantine "/Applications/Code Agent Switcher.app"
             ```
 
             The disk image has a **Terminal** shortcut next to the app for exactly

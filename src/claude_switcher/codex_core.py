@@ -359,10 +359,10 @@ def _launch_codex_login_terminal() -> None:
     script_path = Path(tempfile.gettempdir()) / f"claude-switcher-codex-login-{os.getpid()}.command"
     codex_cmd = shlex.quote(_codex_cmd())
     script = f"""#!/bin/zsh
-echo "Claude Switcher - Codex login"
+echo "Code Agent Switcher - Codex login"
 echo ""
 echo "Complete the Codex login flow in this Terminal window."
-echo "When login succeeds, return to Claude Switcher."
+echo "When login succeeds, return to Code Agent Switcher."
 echo ""
 {codex_cmd} login -c 'cli_auth_credentials_store="file"'
 status=$?

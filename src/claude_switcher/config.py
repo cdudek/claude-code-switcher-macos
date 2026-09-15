@@ -1,11 +1,16 @@
-"""Account list persistence in ~/.config/claude-switcher/accounts.json."""
+"""Account list persistence in ~/.config/claude-switcher/accounts.json.
+
+The path keeps the old name on purpose. The app was renamed to Code Agent
+Switcher; moving this file, or the `claude-switcher:<email>` Keychain items
+beside it, would lose every saved account on the machines that already have
+them. A product name is a label, these are addresses.
+"""
 
 import json
 import os
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
-from claude_switcher.icons import DEFAULT_ICON
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "claude-switcher" / "accounts.json"
 CONFIG_VERSION = 2
@@ -29,7 +34,6 @@ class AppSettings:
         default_factory=lambda: {provider: False for provider in DEFAULT_PROVIDERS}
     )
     auto_switch_threshold: float = 100.0
-    icon: str = DEFAULT_ICON
     auto_update: bool = True
 
 
@@ -78,10 +82,6 @@ def _settings_from_dict(data: dict | None) -> AppSettings:
     except (TypeError, ValueError):
         threshold = defaults.auto_switch_threshold
 
-    icon = data.get("icon", defaults.icon)
-    if not isinstance(icon, str) or not icon:
-        icon = defaults.icon
-
     auto_update = data.get("auto_update", defaults.auto_update)
     if not isinstance(auto_update, bool):
         auto_update = defaults.auto_update
@@ -89,7 +89,6 @@ def _settings_from_dict(data: dict | None) -> AppSettings:
     return AppSettings(
         auto_switch=auto_switch,
         auto_switch_threshold=threshold,
-        icon=icon,
         auto_update=auto_update,
     )
 
@@ -180,13 +179,6 @@ def is_auto_switch_enabled(provider: str, path: Path = DEFAULT_CONFIG_PATH) -> b
     """Return whether auto-switch is enabled for a provider."""
     settings = load_settings(path)
     return bool(settings.auto_switch.get(provider, False))
-
-
-def set_icon(slug: str, path: Path = DEFAULT_CONFIG_PATH) -> None:
-    """Persist the chosen menu bar icon."""
-    settings = load_settings(path)
-    settings.icon = slug
-    save_settings(settings, path)
 
 
 def set_auto_update(enabled: bool, path: Path = DEFAULT_CONFIG_PATH) -> None:

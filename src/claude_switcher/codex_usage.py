@@ -156,18 +156,21 @@ def _format_reset_delta(reset_at: float) -> str:
     return f"{minutes}m"
 
 
-def codex_usage_state(usage: dict | None) -> UsageState:
+def codex_usage_state(usage: dict | None, reason: str | None = None) -> UsageState:
     """Convert Codex usage data into a normalized usage state."""
     if not usage:
-        return UsageState(available=False, display="Usage unavailable")
+        return UsageState(available=False, display="Usage unavailable",
+                          reason=reason or "no answer from the Codex CLI")
 
     error = usage.get("error")
     if isinstance(error, dict) and error.get("code") == "login_required":
-        return UsageState(available=False, display="Login required")
+        return UsageState(available=False, display="Login required",
+                          reason="sign in to Codex again")
 
     rate_limit = usage.get("rate_limit")
     if not isinstance(rate_limit, dict):
-        return UsageState(available=False, display="Usage unavailable")
+        return UsageState(available=False, display="Usage unavailable",
+                          reason=reason or "the CLI reported no limits")
 
     parts = []
     windows = []
@@ -185,7 +188,8 @@ def codex_usage_state(usage: dict | None) -> UsageState:
         windows.append(UsageWindow(label=label, percent=percent, resets_in=reset))
 
     if not parts:
-        return UsageState(available=False, display="Usage unavailable")
+        return UsageState(available=False, display="Usage unavailable",
+                          reason=reason or "the CLI reported no windows")
     return UsageState(available=True, display=" | ".join(parts), windows=tuple(windows))
 
 

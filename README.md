@@ -1,19 +1,19 @@
-# Claude Code Switcher for macOS
+# Code Agent Switcher
 
 Switch between several Claude Code and Codex CLI accounts from the menu bar,
 without logging out, opening a browser, and logging back in every time.
 
 > A fork of [Symbioose/claude-account-switcher](https://github.com/Symbioose/claude-account-switcher)
 > by [Emile Jouannet](https://github.com/Symbioose), who wrote the app. This fork fixes
-> six ways a saved sign-in was silently destroyed, and adds an icon set, self-update
+> six ways a saved sign-in was silently destroyed, and adds a usage report, self-update
 > and a real installer. The fixes are offered back upstream as
 > [PR #11](https://github.com/Symbioose/claude-account-switcher/pull/11).
 
 ## Install
 
 Download the latest **`.dmg`** from
-[Releases](https://github.com/cdudek/claude-code-switcher-macos/releases/latest)
-and drag Claude Switcher into Applications. That is the whole install.
+[Releases](https://github.com/cdudek/code-agent-switcher/releases/latest)
+and drag Code Agent Switcher into Applications. That is the whole install.
 
 Prefer to build it? `./install.sh` compiles, tests, installs and launches — and
 skips the security warning below entirely, because a locally built app was never
@@ -21,7 +21,7 @@ downloaded.
 
 ### macOS will refuse to open the download the first time
 
-You will get *"Apple could not verify Claude Switcher is free of malware"*, or
+You will get *"Apple could not verify Code Agent Switcher is free of malware"*, or
 *"cannot be opened because the developer cannot be verified"*.
 
 **Nothing is wrong with the app.** That check asks one question: did a **paid Apple
@@ -32,7 +32,7 @@ same as unsigned.
 Clear the flag once:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Claude Switcher.app"
+xattr -dr com.apple.quarantine "/Applications/Code Agent Switcher.app"
 ```
 
 The disk image has a **Terminal** shortcut next to the app and a
@@ -52,27 +52,52 @@ tells you to use it — including v0.7.1 of this one, which shipped an
   another plan
 - **Switch Codex CLI accounts** independently; the active Claude account is
   untouched when you change the Codex one
-- **Live usage in the bar** — Claude's 5-hour and 7-day windows, Codex's primary
-  and secondary
+- **Live usage in the menu** — a bar per limit window, the figure, and when it
+  resets. When there is no reading it says *why*: signed out, rate limited, no
+  answer. Claude reports a 5-hour and a 7-day window, Codex a primary and a
+  secondary.
 - **Auto-switch at the limit**, per provider, off by default
-- **Fourteen menu bar icons** under **Icon** — five sparks, five relays, plus
-  Claude's sunburst, a graph and a toggle. Every mark trades saying *switch*
-  against saying *AI* against staying readable at 22 points, and which trade wins
-  depends on what else is in your bar, so the set ships rather than one winner.
+- **Usage report** — what the last 30 days actually cost, by day, by model and by
+  five-hour window. See below.
 - **Self-update** — see below
 
 Credentials live in the macOS Keychain, never in a config file.
 
+## Usage report
+
+**Usage report…** in the menu builds a page and opens it in your browser. It reads
+the transcripts Claude Code and Codex already write to disk, which carry a
+timestamp, a model and a full token breakdown for every message. Nothing leaves
+your Mac and no API is called.
+
+It answers four things:
+
+- **What it costs.** Priced at Anthropic list rates, so it is an order of
+  magnitude against your subscription, not an invoice. A model with no published
+  rate is priced at its family's rate and marked *assumed*; one with no rate at
+  all is counted in tokens and named.
+- **By day.** Tokens split into cache read, cache write, input and output. On a
+  long agent session cache reads are usually well over 90% of everything, which
+  is the single most surprising number in the report.
+- **How the five-hour window breathes.** A window opens on a message and the next
+  message five hours later opens a new one, so the count of windows is the count
+  of resets. Anthropic publishes only the window you are in right now; this is
+  reconstructed from your own transcripts.
+- **Where it goes.** Totals per model and per agent.
+
+The same message appears in several transcripts when a session is resumed, so
+records are deduplicated on message id. Without that the totals roughly double.
+
 ## Updates
 
-The app checks [Releases](https://github.com/cdudek/claude-code-switcher-macos/releases)
+The app checks [Releases](https://github.com/cdudek/code-agent-switcher/releases)
 on launch and every six hours, and offers anything newer. **Updates → Check now**
 forces a check; **Check automatically** turns the background one off.
 
 It never installs without asking. Installing verifies the download unpacks to
 exactly one app bundle, then hands the swap to a script that waits for the app to
 quit — a running bundle cannot replace itself. Your current version is kept next to
-the new one as `Claude Switcher.app.previous`, so a bad build is one rename away
+the new one as `Code Agent Switcher.app.previous`, so a bad build is one rename away
 from undone.
 
 The download is unsigned, so two refusals are the whole trust boundary: the URL
@@ -127,8 +152,8 @@ bundle carries its own Python.
 ## Developing
 
 ```bash
-git clone https://github.com/cdudek/claude-code-switcher-macos.git
-cd claude-code-switcher-macos
+git clone https://github.com/cdudek/code-agent-switcher.git
+cd code-agent-switcher
 /opt/homebrew/bin/python3.14 -m venv .venv
 ./.venv/bin/pip install -e ".[dev]" "py2app>=0.28" rumps
 ```
@@ -139,8 +164,8 @@ announced itself.
 
 ```bash
 ./.venv/bin/python -m pytest tests/ -q     # 196 tests
-./build_app.sh                             # dist/Claude Switcher.app
-./scripts/make-dmg.sh                      # dist/Claude-Switcher.dmg
+./build_app.sh                             # dist/Code Agent Switcher.app
+./scripts/make-dmg.sh                      # dist/Code-Agent-Switcher.dmg
 ./install.sh                               # all of the above, into /Applications
 ```
 

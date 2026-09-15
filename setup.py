@@ -32,8 +32,8 @@ OPTIONS = {
     "iconfile": ICON,
     # LSUIElement=True = menu bar app only (no Dock icon, no Cmd+Tab entry)
     "plist": {
-        "CFBundleName": "Claude Switcher",
-        "CFBundleDisplayName": "Claude Switcher",
+        "CFBundleName": "Code Agent Switcher",
+        "CFBundleDisplayName": "Code Agent Switcher",
         "CFBundleIdentifier": "com.emilejouannet.claude-switcher",
         "CFBundleVersion": VERSION,
         "CFBundleShortVersionString": VERSION,
@@ -49,6 +49,6 @@ OPTIONS = {
 
 setup(
     app=APP,
-    name="Claude Switcher",
+    name="Code Agent Switcher",
     options={"py2app": OPTIONS},
 )

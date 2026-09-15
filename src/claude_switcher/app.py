@@ -1,6 +1,7 @@
 """macOS menu bar application using rumps."""
 
 import tempfile
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -35,11 +36,10 @@ from claude_switcher.config import (
     load_settings,
     set_auto_switch_enabled,
     set_auto_update,
-    set_icon,
     DEFAULT_CONFIG_PATH,
 )
 from claude_switcher import updater
-from claude_switcher.icons import ICON_LABELS, icon_path, is_known
+from claude_switcher.icons import icon_path
 from claude_switcher.core import (
     check_claude_cli,
     live_claude_email,
@@ -49,8 +49,14 @@ from claude_switcher.core import (
     remove_saved_account,
     ClaudeCredentialsExpiredError,
 )
-from claude_switcher.usage import fetch_usage_for_account, fetch_active_usage, claude_usage_state
-from claude_switcher.usage_state import UsageState
+from claude_switcher.usage import fetch_usage_detail_for_account, fetch_active_usage_detail, claude_usage_state
+from claude_switcher.usage_state import ROW_INDENT, UsageState, usage_rows
+from claude_switcher.ledger import load_records, since_days
+from claude_switcher.report import write_report
+
+# A month is long enough to see a trend and short enough to read in a few
+# seconds; the whole transcript tree here is 1.3 GB.
+REPORT_DAYS = 30
 
 
 PROVIDER_LABELS = {
@@ -97,8 +103,7 @@ def _on_main_thread(fn):
 class ClaudeSwitcherApp(rumps.App):
     def __init__(self):
         self.config_path = DEFAULT_CONFIG_PATH
-        chosen = load_settings(self.config_path).icon
-        super().__init__("", icon=icon_path(chosen), template=True, quit_button=None)
+        super().__init__("", icon=icon_path(), template=True, quit_button=None)
         self._usage_cache: dict[tuple[str, str], str] = {}
         self._usage_state_cache: dict[tuple[str, str], UsageState] = {}
         self._usage_items: dict[tuple[str, str], rumps.MenuItem] = {}
@@ -111,6 +116,7 @@ class ClaudeSwitcherApp(rumps.App):
         self._auto_switch_timer = rumps.Timer(self._on_periodic_usage_refresh, 300)
         self._auto_switch_timer.start()
         self._update_in_progress = False
+        self._report_in_progress = False
         self._update_timer = rumps.Timer(self._on_periodic_update_check, UPDATE_CHECK_INTERVAL_SECONDS)
         self._update_timer.start()
         # The first tick of a rumps.Timer fires immediately; defer the launch
@@ -131,7 +137,7 @@ class ClaudeSwitcherApp(rumps.App):
             if imported:
                 imported_any = True
                 rumps.notification(
-                    title="Claude Switcher",
+                    title="Code Agent Switcher",
                     subtitle="Claude account imported",
                     message=f"{imported.email} ({imported.subscription_type})",
                 )
@@ -142,14 +148,14 @@ class ClaudeSwitcherApp(rumps.App):
             except Exception as exc:
                 imported = None
                 rumps.notification(
-                    title="Claude Switcher",
+                    title="Code Agent Switcher",
                     subtitle="Codex import skipped",
                     message=str(exc),
                 )
             if imported:
                 imported_any = True
                 rumps.notification(
-                    title="Claude Switcher",
+                    title="Code Agent Switcher",
                     subtitle="Codex account imported",
                     message=f"{imported.email} ({imported.subscription_type})",
                 )
@@ -157,7 +163,7 @@ class ClaudeSwitcherApp(rumps.App):
         if not imported_any and not claude_available and not codex_available:
             rumps.alert(
                 title="CLI not found",
-                message="Please install Claude Code or Codex CLI before using Claude Switcher.",
+                message="Please install Claude Code or Codex CLI before using Code Agent Switcher.",
             )
 
     def _rebuild_menu(self):
@@ -178,11 +184,11 @@ class ClaudeSwitcherApp(rumps.App):
 
         self.menu.add(rumps.separator)
         self._add_auto_switch_menu()
-        self._add_icon_menu()
         self._add_update_menu()
         self.menu.add(rumps.MenuItem("\u271A  Add Claude account...", callback=self._on_add_claude_account))
         self.menu.add(rumps.MenuItem("\u271A  Add Codex account...", callback=self._on_add_codex_account))
         self.menu.add(rumps.MenuItem("\u21BB  Refresh usage", callback=self._on_refresh_usage))
+        self.menu.add(rumps.MenuItem("\u25F7  Usage report\u2026", callback=self._on_usage_report))
 
         if accounts:
             remove_menu = rumps.MenuItem("\u2212  Remove account")
@@ -196,38 +202,6 @@ class ClaudeSwitcherApp(rumps.App):
 
         self.menu.add(rumps.separator)
         self.menu.add(rumps.MenuItem("\u23FB  Quit", callback=rumps.quit_application))
-
-    def _add_icon_menu(self):
-        """Let the icon be changed from the bar it sits in.
-
-        Every mark is a compromise between saying "switch", saying "AI" and
-        staying legible at 22 points, and which compromise is right is a matter
-        of taste and of what else is already in your menu bar. Cheaper to ship
-        the set than to argue for one.
-        """
-        current = load_settings(self.config_path).icon
-        menu = rumps.MenuItem("\u25C7  Icon")
-        for slug, label in ICON_LABELS.items():
-            item = rumps.MenuItem(label, callback=self._on_pick_icon)
-            item.state = 1 if slug == current else 0
-            item._slug = slug
-            menu.add(item)
-        self.menu.add(menu)
-
-    def _on_pick_icon(self, sender):
-        """Swap the menu bar icon and remember the choice."""
-        slug = sender._slug
-        if not is_known(slug):
-            rumps.alert(
-                title="Icon not available",
-                message=f"This build does not ship an icon named {slug}.",
-            )
-            return
-        set_icon(slug, self.config_path)
-        # rumps redraws the status item when either property is assigned
-        self.icon = icon_path(slug)
-        self.template = True
-        self._rebuild_menu()
 
     def _add_update_menu(self):
         version = updater.current_version()
@@ -279,7 +253,7 @@ class ClaudeSwitcherApp(rumps.App):
                 elif announce_up_to_date:
                     rumps.alert(
                         title="You are up to date",
-                        message=f"Claude Switcher {updater.current_version()} is the newest release.",
+                        message=f"Code Agent Switcher {updater.current_version()} is the newest release.",
                     )
 
             _on_main_thread(_finish)
@@ -287,7 +261,7 @@ class ClaudeSwitcherApp(rumps.App):
         threading.Thread(target=_work, daemon=True).start()
 
     def _offer_update(self, version: str, url: str, notes: str) -> None:
-        body = f"Claude Switcher {version} is available. You have {updater.current_version()}."
+        body = f"Code Agent Switcher {version} is available. You have {updater.current_version()}."
         if notes.strip():
             body += "\n\n" + notes.strip()[:600]
         body += "\n\nInstalling replaces the app and restarts it. The version you have now goes to the Trash."
@@ -377,12 +351,15 @@ class ClaudeSwitcherApp(rumps.App):
 
             if has_creds:
                 key = account_key(account)
-                cached = self._usage_cache.get(key, "\u2022\u2022\u2022")
-                usage_label = rumps.MenuItem(f"       \u2502  {cached}", callback=None)
-                usage_label._email = account.email
-                usage_label._provider = provider
-                self._usage_items[key] = usage_label
-                self.menu.add(usage_label)
+                rows = self._usage_cache.get(key) or ("reading usage\u2026", "")
+                items = []
+                for row in rows:
+                    label = rumps.MenuItem(f"{ROW_INDENT}{row}", callback=None)
+                    label._email = account.email
+                    label._provider = provider
+                    items.append(label)
+                    self.menu.add(label)
+                self._usage_items[key] = tuple(items)
 
     def _add_auto_switch_menu(self):
         settings = load_settings(self.config_path)
@@ -414,7 +391,7 @@ class ClaudeSwitcherApp(rumps.App):
             return
         if provider in self._switch_in_progress:
             rumps.notification(
-                title="Claude Switcher",
+                title="Code Agent Switcher",
                 subtitle=f"{PROVIDER_LABELS[provider]} switch already running",
                 message="Wait for the current switch to finish.",
             )
@@ -443,7 +420,7 @@ class ClaudeSwitcherApp(rumps.App):
                     rumps.alert(title="Error", message=error)
                 else:
                     rumps.notification(
-                        title="Claude Switcher",
+                        title="Code Agent Switcher",
                         subtitle=f"{PROVIDER_LABELS[provider]} account switched",
                         message=email,
                     )
@@ -491,7 +468,7 @@ class ClaudeSwitcherApp(rumps.App):
             rumps.alert(title="Could not remove account", message=f"{email}\n\n{exc}")
             return
         rumps.notification(
-            title="Claude Switcher",
+            title="Code Agent Switcher",
             subtitle=f"{PROVIDER_LABELS[provider]} account removed",
             message=email,
         )
@@ -512,18 +489,18 @@ class ClaudeSwitcherApp(rumps.App):
                 result = add_new_account(self.config_path)
                 if result:
                     title, subtitle, message = (
-                        "Claude Switcher",
+                        "Code Agent Switcher",
                         "Claude account added",
                         f"{result.email} ({result.subscription_type})",
                     )
                 else:
                     title, subtitle, message = (
-                        "Claude Switcher",
+                        "Code Agent Switcher",
                         "Cancelled",
                         "Login was cancelled or failed.",
                     )
             except Exception as exc:
-                title, subtitle, message = "Claude Switcher", "Error", str(exc)
+                title, subtitle, message = "Code Agent Switcher", "Error", str(exc)
 
             def _finish():
                 if subtitle == "Error":
@@ -552,18 +529,18 @@ class ClaudeSwitcherApp(rumps.App):
                 result = add_new_codex_account(self.config_path)
                 if result:
                     title, subtitle, message = (
-                        "Claude Switcher",
+                        "Code Agent Switcher",
                         "Codex account added",
                         f"{result.email} ({result.subscription_type})",
                     )
                 else:
                     title, subtitle, message = (
-                        "Claude Switcher",
+                        "Code Agent Switcher",
                         "Cancelled",
                         "Login was cancelled or failed.",
                     )
             except Exception as exc:
-                title, subtitle, message = "Claude Switcher", "Error", str(exc)
+                title, subtitle, message = "Code Agent Switcher", "Error", str(exc)
 
             def _finish():
                 if subtitle == "Error":
@@ -585,7 +562,7 @@ class ClaudeSwitcherApp(rumps.App):
         set_auto_switch_enabled(provider, enabled, self.config_path)
         self._rebuild_menu()
         rumps.notification(
-            title="Claude Switcher",
+            title="Code Agent Switcher",
             subtitle=f"Auto-switch {PROVIDER_LABELS[provider]}",
             message="Enabled" if enabled else "Disabled",
         )
@@ -608,7 +585,7 @@ class ClaudeSwitcherApp(rumps.App):
                     key = account_key(account)
                     state = self._fetch_usage_state(account, active_by_provider.get(account.provider))
                     self._usage_state_cache[key] = state
-                    self._usage_cache[key] = state.display
+                    self._usage_cache[key] = usage_rows(state)
 
                 for provider in ("claude", "codex"):
                     result = self._attempt_auto_switch(provider)
@@ -632,12 +609,12 @@ class ClaudeSwitcherApp(rumps.App):
     def _fetch_usage_state(self, account, active_account) -> UsageState:
         try:
             if account.provider == "claude":
-                usage = (
-                    fetch_active_usage()
+                usage, reason = (
+                    fetch_active_usage_detail()
                     if active_account and active_account.email == account.email
-                    else fetch_usage_for_account(account.email)
+                    else fetch_usage_detail_for_account(account.email)
                 )
-                return claude_usage_state(usage)
+                return claude_usage_state(usage, reason)
             if account.provider == "codex":
                 usage = (
                     fetch_active_codex_usage()
@@ -647,7 +624,8 @@ class ClaudeSwitcherApp(rumps.App):
                 return codex_usage_state(usage)
         except Exception:
             pass
-        return UsageState(available=False, display="Usage unavailable")
+        return UsageState(available=False, display="Usage unavailable",
+                          reason="the app hit an unexpected error")
 
     def _attempt_auto_switch(self, provider: str) -> dict | None:
         settings = load_settings(self.config_path)
@@ -701,32 +679,63 @@ class ClaudeSwitcherApp(rumps.App):
         label = PROVIDER_LABELS[provider]
         if result["status"] == "switched":
             rumps.notification(
-                title="Claude Switcher",
+                title="Code Agent Switcher",
                 subtitle=f"Auto-switched {label}",
                 message=result["email"],
             )
         elif result["status"] == "no_target":
             rumps.notification(
-                title="Claude Switcher",
+                title="Code Agent Switcher",
                 subtitle=f"{label} limit reached",
                 message="No available account to switch to.",
             )
         elif result["status"] == "error":
             rumps.notification(
-                title="Claude Switcher",
+                title="Code Agent Switcher",
                 subtitle=f"{label} auto-switch failed",
                 message=result.get("message", "Unknown error"),
             )
 
     def _update_usage_labels(self):
-        """Update usage labels in the menu from cache."""
-        for key, item in self._usage_items.items():
-            usage_text = self._usage_cache.get(key, "Usage unavailable")
-            item.title = f"       \u2502  {usage_text}"
+        """Rewrite the usage rows in place, without rebuilding the menu."""
+        for key, items in self._usage_items.items():
+            rows = self._usage_cache.get(key) or ("no usage reading", "reason unknown")
+            for item, row in zip(items, rows):
+                item.title = f"{ROW_INDENT}{row}"
 
     def _on_refresh_usage(self, _):
         """Refresh usage data for all accounts."""
         self._fetch_all_usage()
+
+    def _on_usage_report(self, _):
+        """Build the token and cost report and open it in the browser.
+
+        Reading a month of transcripts takes a few seconds, so it happens off the
+        main thread; blocking there freezes the whole menu bar, not just this app.
+        """
+        if self._report_in_progress:
+            return
+        self._report_in_progress = True
+
+        def _work():
+            error = None
+            path = None
+            try:
+                records = load_records(since_days(REPORT_DAYS))
+                path = write_report(records)
+            except Exception as exc:
+                error = str(exc)
+
+            def _finish():
+                self._report_in_progress = False
+                if error:
+                    rumps.alert(title="Could not build the report", message=error)
+                    return
+                subprocess.Popen(["/usr/bin/open", str(path)])
+
+            _on_main_thread(_finish)
+
+        threading.Thread(target=_work, daemon=True).start()
 
     def _on_periodic_usage_refresh(self, _):
         self._fetch_all_usage()
