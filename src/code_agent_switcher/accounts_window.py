@@ -12,10 +12,11 @@ import AppKit
 import objc
 from Foundation import NSMakeRect
 
-from code_agent_switcher.ui import DotView, PillView, _label, pill_width
+from code_agent_switcher.ui import PillView, _label, pill_width
 
 WIDTH = 520.0
 ROW_HEIGHT = 44.0
+ROW_INSET = 18.0
 GROUP_PAD = 10.0
 PROVIDER_LABELS = {"claude": "Claude Code", "codex": "Codex CLI"}
 
@@ -202,14 +203,13 @@ class AccountsWindowController:
         informs the choice already is. A radio here was a second place to do the
         same thing, out of sight of the numbers.
         """
-        if is_active:
-            dot = DotView.alloc().initWithFrame_(NSMakeRect(20, y + ROW_HEIGHT / 2 - 4, 8, 8))
-            group.addSubview_(dot)
-
+        # No marker column. "Active" on the right already says which one is in
+        # use, and a dot that appears on one row of four indented every other
+        # row to leave space for a thing that was not there.
         name = _label(account.email, 13.0)
         name.sizeToFit()
         frame = name.frame()
-        name.setFrame_(NSMakeRect(40, y + (ROW_HEIGHT - frame.size.height) / 2,
+        name.setFrame_(NSMakeRect(ROW_INSET, y + (ROW_HEIGHT - frame.size.height) / 2,
                                   frame.size.width, frame.size.height))
         group.addSubview_(name)
 
@@ -217,7 +217,8 @@ class AccountsWindowController:
         if plan:
             width = pill_width(plan)
             pill = PillView.alloc().initWithFrame_text_(
-                NSMakeRect(48 + frame.size.width, y + ROW_HEIGHT / 2 - 8, width, 16), plan
+                NSMakeRect(ROW_INSET + 8 + frame.size.width, y + ROW_HEIGHT / 2 - 8,
+                           width, 16), plan
             )
             group.addSubview_(pill)
 
