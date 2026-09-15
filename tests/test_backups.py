@@ -118,3 +118,23 @@ class TestEveryWriterTakesOne:
         seen = self._spy(monkeypatch, config)
         config.save_accounts([], path)
         assert seen == [path]
+
+
+class TestTheCopiesAreNotAWeakerCopy:
+    """Two of these files carry live credentials, so a backup must not be an
+    easier-to-read version of the original."""
+
+    def test_the_directory_is_private(self, tmp_path):
+        d = tmp_path / "b"
+        backups.snapshot(_src(tmp_path), d)
+        assert oct(d.stat().st_mode & 0o777) == "0o700"
+
+    def test_the_copy_keeps_the_source_permissions(self, tmp_path):
+        src = _src(tmp_path)
+        src.chmod(0o600)
+        out = backups.snapshot(src, tmp_path / "b")
+        assert oct(out.stat().st_mode & 0o777) == "0o600"
+
+    def test_only_five_copies_of_a_credential_file_are_kept(self, tmp_path):
+        """Every extra copy is another plaintext copy of a working secret."""
+        assert backups.KEEP_PER_FILE == 5

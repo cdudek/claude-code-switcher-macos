@@ -23,7 +23,13 @@ BACKUP_DIR = (
 
 # Per source file, not in total: a file written on every switch must not push
 # another file's only copy out of the directory.
-KEEP_PER_FILE = 20
+#
+# Five, not twenty. Two of these files carry live credentials - `auth.json`
+# holds a Codex refresh token - so every copy kept is another plaintext copy of
+# a working secret sitting on disk. A backup exists to undo the last bad write,
+# and five is already generous for that. Twenty was four times the exposure for
+# no extra ability to recover.
+KEEP_PER_FILE = 5
 
 
 def _stamp(now: datetime | None = None) -> str:
@@ -43,7 +49,9 @@ def snapshot(path: Path, directory: Path | None = None, now: datetime | None = N
     try:
         if not path.is_file():
             return None
-        directory.mkdir(parents=True, exist_ok=True)
+        # 0700, like ~/.config/claude-switcher. These copies hold credentials,
+        # and the default 0755 was looser than the files inside them.
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         # The source name is kept whole, dots included, so ".claude.json" and
         # "auth.json" cannot collide and each prunes only its own history.
         target = directory / f"{path.name}.{_stamp(now)}"
