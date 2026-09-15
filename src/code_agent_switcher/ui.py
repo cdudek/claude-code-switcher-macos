@@ -193,11 +193,26 @@ class PillView(AppKit.NSView):
 
 
 class DotView(AppKit.NSView):
-    """The active marker."""
+    """The active marker, for places that only report rather than offer a choice."""
 
     def drawRect_(self, rect):
         AppKit.NSColor.controlAccentColor().setFill()
         AppKit.NSBezierPath.bezierPathWithOvalInRect_(self.bounds()).fill()
+
+
+class _RadioTarget(AppKit.NSObject):
+    """Holds the handler for a card's radio. Retained by the card."""
+
+    def initWithHandler_(self, handler):
+        self = objc.super(_RadioTarget, self).init()
+        if self is None:
+            return None
+        self._handler = handler
+        return self
+
+    def fire_(self, sender):
+        if self._handler is not None:
+            self._handler()
 
 
 def pill_width(text: str) -> float:
@@ -212,9 +227,11 @@ CARD_BOTTOM = 8.0
 # card's own inset was thrown away and every card ran edge to edge. It sits in
 # a full-width wrapper now, which is what carries the side padding and the gap.
 CARD_GAP = 8.0
+RADIO_WIDTH = 20.0
 
 
-def account_card(email: str, plan: str, active: bool, rows, reason: str | None = None) -> AppKit.NSView:
+def account_card(email: str, plan: str, active: bool, rows, reason: str | None = None,
+                 on_click=None) -> AppKit.NSView:
     """One account: identity on top, a bar per limit window under it.
 
     `rows` is a sequence of (label, percent, resets_in or None). An account with
@@ -230,11 +247,30 @@ def account_card(email: str, plan: str, active: bool, rows, reason: str | None =
     inner = PAD
 
     top = height - 26.0
-    left = inner
-    if active:
-        dot = DotView.alloc().initWithFrame_(NSMakeRect(inner, top + 5, 8, 8))
-        card.addSubview_(dot)
-        left = inner + 16
+    left = inner + RADIO_WIDTH
+
+    # A standard radio, not a dot and not a hover highlight. This is a choice
+    # between accounts, which is what a radio means, and a control people can
+    # see before they click is worth more than one they have to discover.
+    radio = AppKit.NSButton.alloc().initWithFrame_(
+        NSMakeRect(inner, top + 1, RADIO_WIDTH, 18)
+    )
+    radio.setButtonType_(AppKit.NSButtonTypeRadio)
+    radio.setTitle_("")
+    radio.setState_(
+        AppKit.NSControlStateValueOn if active else AppKit.NSControlStateValueOff
+    )
+    # The selected radio stays enabled: a disabled one draws grey, and the
+    # account you are on is the one that should look chosen, not unavailable.
+    # It carries no action, so clicking it does nothing, which is what picking
+    # the option you already have should do.
+    if on_click is not None and not active:
+        target = _RadioTarget.alloc().initWithHandler_(on_click)
+        card._radio_target = target
+        radio.setTarget_(target)
+        radio.setAction_("fire:")
+    card.addSubview_(radio)
+    card._radio = radio
 
     name = _label(email, 13.0, weight=AppKit.NSFontWeightMedium)
     name.sizeToFit()
@@ -358,7 +394,7 @@ def set_symbol(item, name: str) -> None:
 def card_row(email: str, plan: str, active: bool, rows, reason: str | None = None,
              on_click=None) -> AppKit.NSView:
     """A card in a full-width wrapper: side padding, and a gap below it."""
-    card = account_card(email, plan, active, rows, reason)
+    card = account_card(email, plan, active, rows, reason, on_click=on_click)
     if on_click is not None:
         card.setOnClick_(on_click)
     height = card.frame().size.height

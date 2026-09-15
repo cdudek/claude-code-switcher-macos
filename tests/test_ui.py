@@ -6,6 +6,7 @@ rows, and that a card is built at the height its contents need - a card sized
 for two rows that gets three silently clips the third.
 """
 
+import AppKit
 import pytest
 
 from code_agent_switcher import ui
@@ -66,11 +67,19 @@ class TestCardGeometry:
         card = ui.account_card("a@b.c", "team", True, [("5h", 5.0, "1h")])
         assert card.frame().size.width == ui.PANEL_WIDTH - 2 * ui.PAD
 
-    def test_the_active_card_carries_the_dot(self):
+    def test_every_card_carries_a_radio(self):
+        """A standard control, visible before it is clicked - not a hover
+        highlight people have to discover."""
+        for active in (True, False):
+            card = ui.account_card("a@b.c", "team", active, [("5h", 5.0, None)])
+            radios = [v for v in card.subviews() if isinstance(v, AppKit.NSButton)]
+            assert len(radios) == 1
+
+    def test_the_active_card_is_the_selected_radio(self):
         active = ui.account_card("a@b.c", "team", True, [("5h", 5.0, None)])
         idle = ui.account_card("a@b.c", "team", False, [("5h", 5.0, None)])
-        dots = lambda card: sum(1 for v in card.subviews() if isinstance(v, ui.DotView))
-        assert (dots(active), dots(idle)) == (1, 0)
+        assert active._radio.state() == AppKit.NSControlStateValueOn
+        assert idle._radio.state() == AppKit.NSControlStateValueOff
 
 
 class TestMenuSymbols:
@@ -188,3 +197,40 @@ class TestMenuKeepsCardsEnabled:
         import inspect
         from code_agent_switcher import app
         assert "setAutoenablesItems_(False)" in inspect.getsource(app.ClaudeSwitcherApp._rebuild_menu)
+
+
+class TestRadioSelection:
+    """The radio is the control. Clicking it switches."""
+
+    def _card(self, active=False, handler=None):
+        AppKit.NSApplication.sharedApplication()
+        return ui.card_row("a@b.c", "team", active, [("5h", 5.0, None)],
+                           on_click=handler).subviews()[0]
+
+    def test_it_really_is_a_radio(self):
+        """The whole point was a standard control. A push button styled like
+        one is the thing that was rejected."""
+        cell = self._card()._radio.cell()
+        assert (cell.showsStateBy(), cell.highlightsBy()) == (
+            AppKit.NSContentsCellMask, AppKit.NSContentsCellMask
+        )
+
+    def test_clicking_the_radio_switches(self):
+        calls = []
+        card = self._card(handler=lambda: calls.append(1))
+        card._radio.performClick_(None)
+        assert calls == [1]
+
+    def test_the_selected_radio_stays_enabled_so_it_draws_selected(self):
+        """A disabled radio draws grey; the account in use should look chosen,
+        not unavailable."""
+        card = self._card(active=True, handler=lambda: None)
+        assert card._radio.isEnabled() is True
+        assert card._radio.state() == AppKit.NSControlStateValueOn
+
+    def test_the_selected_radio_carries_no_action(self):
+        """Picking the option you already have does nothing."""
+        assert self._card(active=True, handler=lambda: None)._radio.target() is None
+
+    def test_a_card_with_no_handler_has_no_action_either(self):
+        assert self._card()._radio.target() is None
