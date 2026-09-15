@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -297,7 +298,48 @@ def _repo_name(cwd: str) -> str:
         path = Path(*parts[: parts.index(".worktrees")])
     for directory in (path, *path.parents):
         if (directory / ".git").exists():
-            return directory.name
+            # A dot directory is somewhere a tool keeps its own state, not a
+            # repository anyone works in: ~/.claude is version controlled, and
+            # a job sandbox under it was landing as a project called ".claude".
+            return "" if directory.name.startswith(".") else directory.name
+    return _named_project(path)
+
+
+# Where repositories are kept. A checkout that has since been deleted has no
+# `.git` to find, but the path still names it - omr-marketing-engine was the
+# second largest directory in the history and was landing in Other purely
+# because the folder is gone.
+PROJECT_ROOTS = (Path.home() / "projects",)
+
+# Throwaway working copies an agent harness makes per run, named `agent-` and a
+# random id.
+AGENT_SANDBOX = re.compile(r"agent-[0-9a-f]{8,}")
+
+
+def _named_project(path: Path) -> str:
+    """The repository name a path under a projects root implies.
+
+    Repositories sit at `<root>/<repo>` or, when they are grouped by owner, at
+    `<root>/<owner>/<repo>`. Only a deleted checkout reaches here, so the first
+    component still existing as a folder is what tells the two apart: an owner
+    folder outlives the repositories inside it, a deleted repository does not.
+    """
+    for root in PROJECT_ROOTS:
+        try:
+            parts = path.relative_to(root).parts
+        except ValueError:
+            continue
+        if not parts:
+            return ""
+        if not (root / parts[0]).is_dir():
+            name = parts[0]  # a deleted repository, with or without a subpath
+        elif len(parts) > 1:
+            name = parts[1]  # an owner folder holding repositories
+        else:
+            return ""  # an owner folder on its own is not a repository
+        # An agent sandbox is made per run and deleted after, so every run that
+        # ever happened left its own row in among the real repositories.
+        return "" if AGENT_SANDBOX.fullmatch(name) else name
     return ""
 
 

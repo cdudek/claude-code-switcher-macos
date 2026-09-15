@@ -287,6 +287,55 @@ class TestProjectAttribution:
         loose.mkdir()
         assert self._project_of(tmp_path, loose) == ""
 
+    def _under_root(self, monkeypatch, tmp_path, rel):
+        from code_agent_switcher import ledger
+        root = tmp_path / "projects"
+        monkeypatch.setattr(ledger, "PROJECT_ROOTS", (root,))
+        return root, root.joinpath(*rel)
+
+    def test_a_deleted_repository_keeps_its_name(self, monkeypatch, tmp_path):
+        """It has no .git left to find, but the path still names it, and it was
+        the second largest directory in the history."""
+        root, cwd = self._under_root(monkeypatch, tmp_path, ("omr", "omr-marketing-engine"))
+        (root / "omr").mkdir(parents=True)
+        assert self._project_of(tmp_path, cwd) == "omr-marketing-engine"
+
+    def test_a_deleted_repository_directly_under_the_root_keeps_its_name(
+        self, monkeypatch, tmp_path
+    ):
+        root, cwd = self._under_root(monkeypatch, tmp_path, ("elk-herd",))
+        root.mkdir(parents=True)
+        assert self._project_of(tmp_path, cwd) == "elk-herd"
+
+    def test_an_owner_folder_is_not_a_repository(self, monkeypatch, tmp_path):
+        root, cwd = self._under_root(monkeypatch, tmp_path, ("omr",))
+        cwd.mkdir(parents=True)
+        assert self._project_of(tmp_path, cwd) == ""
+
+    def test_an_agent_sandbox_is_not_a_repository(self, monkeypatch, tmp_path):
+        """One is made per agent run and deleted after, so every run that ever
+        happened was leaving its own row in among the real repositories."""
+        root, cwd = self._under_root(monkeypatch, tmp_path, ("omr", "agent-a54b2a6d1bf892354"))
+        (root / "omr").mkdir(parents=True)
+        assert self._project_of(tmp_path, cwd) == ""
+
+    def test_a_dot_directory_is_not_a_repository(self, tmp_path):
+        """~/.claude is version controlled, so a job sandbox under it was
+        landing as a project called ".claude"."""
+        sandbox = tmp_path / ".claude" / "jobs" / "a737" / "tmp"
+        sandbox.mkdir(parents=True)
+        (tmp_path / ".claude" / ".git").mkdir()
+        assert self._project_of(tmp_path, sandbox) == ""
+
+    def test_a_subdirectory_of_a_deleted_repository_still_names_the_repository(
+        self, monkeypatch, tmp_path
+    ):
+        """`<root>/elk-herd/src` with elk-herd gone is the repository elk-herd,
+        not a repository called src."""
+        root, cwd = self._under_root(monkeypatch, tmp_path, ("elk-herd", "src"))
+        root.mkdir(parents=True)
+        assert self._project_of(tmp_path, cwd) == "elk-herd"
+
     def test_a_record_with_no_cwd_is_not_fatal(self, tmp_path):
         (tmp_path / "a.jsonl").write_text(_claude_line("m1", "2026-09-01T09:00:00.000Z"))
         [r] = list(claude_records(root=tmp_path))
