@@ -266,3 +266,30 @@ def rows_for(state) -> list[tuple[str, float, str | None]]:
     if not getattr(state, "available", False):
         return []
     return [(w.label, float(w.percent), w.resets_in) for w in state.windows]
+
+
+def symbol(name: str, size: float = 15.0) -> AppKit.NSImage | None:
+    """An SF Symbol for a menu item.
+
+    Glyph prefixes in the title do not line up: a gear, a clock and a power
+    symbol are three different widths, so every row started at a different x.
+    A menu item's image column is one width by construction.
+    """
+    image = AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, None)
+    if image is None:
+        return None
+    config = AppKit.NSImageSymbolConfiguration.configurationWithPointSize_weight_(
+        size, AppKit.NSFontWeightRegular
+    )
+    return image.imageWithSymbolConfiguration_(config) or image
+
+
+def set_symbol(item, name: str) -> None:
+    """Put an SF Symbol in a rumps MenuItem's image column."""
+    image = symbol(name)
+    if image is None:
+        return
+    try:
+        item._menuitem.setImage_(image)
+    except AttributeError:
+        pass

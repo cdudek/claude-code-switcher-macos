@@ -244,18 +244,27 @@ class ClaudeSwitcherApp(rumps.App):
                 ui.section_header("no accounts saved yet")
             ))
 
-        self.menu.add(rumps.MenuItem("\u25A3  Manage accounts\u2026",
-                                     callback=self._on_manage_accounts))
-        self.menu.add(rumps.MenuItem("\u25F7  Usage report\u2026",
-                                     callback=self._on_usage_report))
+        accounts_item = rumps.MenuItem("Manage accounts", callback=self._on_manage_accounts)
+        ui.set_symbol(accounts_item, "person.2")
+        self.menu.add(accounts_item)
+
+        report_item = rumps.MenuItem("Analytics and Usage Report",
+                                     callback=self._on_usage_report)
+        ui.set_symbol(report_item, "chart.bar")
+        self.menu.add(report_item)
+
         self.menu.add(rumps.separator)
-        settings = rumps.MenuItem("\u2699  Settings")
+        settings = rumps.MenuItem("Settings")
+        ui.set_symbol(settings, "gearshape")
         self._add_auto_switch_menu(settings)
         self._add_update_menu(settings)
         self.menu.add(settings)
+
         self.menu.add(rumps.separator)
-        self.menu.add(rumps.MenuItem(f"\u23FB  Quit  (v{updater.current_version()})",
-                                     callback=rumps.quit_application))
+        quit_item = rumps.MenuItem(f"Quit  (v{updater.current_version()})",
+                                   callback=rumps.quit_application)
+        ui.set_symbol(quit_item, "power")
+        self.menu.add(quit_item)
 
     def _card_for(self, key):
         """Build one account card from the cached reading."""
@@ -320,7 +329,7 @@ class ClaudeSwitcherApp(rumps.App):
 
     def _add_update_menu(self, parent):
         version = updater.current_version()
-        menu = rumps.MenuItem(f"\u2191  Updates (v{version})")
+        menu = rumps.MenuItem(f"Updates (v{version})")
         menu.add(rumps.MenuItem("Check now...", callback=self._on_check_for_update))
         auto = rumps.MenuItem("Check automatically", callback=self._on_toggle_auto_update)
         auto.state = 1 if load_settings(self.config_path).auto_update else 0

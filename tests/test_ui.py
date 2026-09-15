@@ -71,3 +71,26 @@ class TestCardGeometry:
         idle = ui.account_card("a@b.c", "team", False, [("5h", 5.0, None)])
         dots = lambda card: sum(1 for v in card.subviews() if isinstance(v, ui.DotView))
         assert (dots(active), dots(idle)) == (1, 0)
+
+
+class TestMenuSymbols:
+    """Glyph prefixes in the title do not line up; the image column does."""
+
+    @pytest.mark.parametrize("name", ["person.2", "chart.bar", "gearshape", "power"])
+    def test_every_symbol_the_menu_asks_for_exists(self, name):
+        assert ui.symbol(name) is not None
+
+    def test_an_unknown_symbol_is_not_fatal(self):
+        assert ui.symbol("not.a.real.symbol.name") is None
+
+    def test_setting_a_symbol_fills_the_image_column(self):
+        import rumps
+        item = rumps.MenuItem("Manage accounts")
+        ui.set_symbol(item, "person.2")
+        assert item._menuitem.image() is not None
+
+    def test_setting_an_unknown_symbol_leaves_the_item_alone(self):
+        import rumps
+        item = rumps.MenuItem("Manage accounts")
+        ui.set_symbol(item, "not.a.real.symbol.name")
+        assert item._menuitem.image() is None
