@@ -61,6 +61,7 @@ from code_agent_switcher.ledger import load_records, since_days, tokens_between
 from code_agent_switcher.report import write_report
 from datetime import timedelta
 from code_agent_switcher import connectors as connectors_api
+from code_agent_switcher import sessions as sessions_api
 from code_agent_switcher import ui, usage_log
 from code_agent_switcher.accounts_window import AccountsWindowController
 
@@ -159,6 +160,9 @@ class ClaudeSwitcherApp(rumps.App):
         # launch of v0.12.0.
         self._connectors_cache: dict = {}
         self._connectors_at: dict = {}
+        # (provider, account) pairs whose usage rose while they were not the
+        # account in use. Recomputed on every poll from the recorded samples.
+        self._spent_elsewhere: set = set()
         self._menu_open = False
         self._open_timer = None
         self._accounts_window = AccountsWindowController(self)
@@ -532,8 +536,35 @@ class ClaudeSwitcherApp(rumps.App):
         )
         return keychain.read_credentials(service) is not None
 
+    def _confirm_switch_with_running_sessions(self, provider: str) -> bool:
+        """Ask before switching while sessions are running. True means go ahead.
+
+        Those sessions hold the credential they started with and will not pick
+        this up. Worse, when one of them refreshes its token, Claude Code writes
+        the new pair back into the same Keychain slot - so the account can
+        silently flip back to the one you just left.
+        """
+        if provider != "claude":
+            return True  # only Claude Code holds a credential this way
+        count = sessions_api.running_sessions()
+        if count < 1:
+            return True
+        plural = "" if count == 1 else "s"
+        return bool(rumps.alert(
+            title="Switch anyway?",
+            message=(
+                f"{count} Claude Code session{plural} {'is' if count == 1 else 'are'} "
+                "running. They keep the account they started with until you restart "
+                "them, and one refreshing its token can switch this back on its own."
+            ),
+            ok="Switch",
+            cancel="Cancel",
+        ))
+
     def _switch_account(self, provider: str, ref: str):
         if self._live_active_ref(provider) == ref:
+            return
+        if not self._confirm_switch_with_running_sessions(provider):
             return
         if provider in self._switch_in_progress:
             rumps.notification(
@@ -750,6 +781,11 @@ class ClaudeSwitcherApp(rumps.App):
                             state=state,
                         )
 
+                try:
+                    self._spent_elsewhere = sessions_api.spent_elsewhere(usage_log.load())
+                except OSError:
+                    pass
+
                 for provider in ("claude", "codex"):
                     result = self._attempt_auto_switch(provider)
                     if result:
@@ -796,6 +832,13 @@ class ClaudeSwitcherApp(rumps.App):
         Saying so before the switch is the whole point - people read the loss as
         the switcher breaking their MCP setup.
         """
+        # A session that started before the switch keeps spending the account
+        # it was launched with, because Claude Code reads its credential once.
+        # That outranks the connector count: it explains a bill nobody can
+        # otherwise account for.
+        if key in self._spent_elsewhere:
+            return "In use by another session", True
+
         rows = self._connectors_cache.get(key)
         if rows is None:
             return "", False

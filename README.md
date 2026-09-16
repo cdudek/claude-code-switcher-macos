@@ -228,6 +228,29 @@ hash, it survives updates, and reads and writes can both move onto the Security
 framework. Until then the CLI write is the only thing that keeps the app working
 across its own updates, and the exposure is the price of that.
 
+## A running session keeps the account it started with
+
+Claude Code reads its credential once, at startup, and holds the token pair in
+memory. Switching accounts replaces the Keychain item and `~/.claude.json`, and
+a session already running never looks again: it keeps spending the account you
+thought you left. Measured on real samples - one account burned 8% of its
+five-hour window across six polling intervals while the app had it marked idle.
+
+The second half is worse and less obvious. Anthropic keeps one live token pair
+per account and revokes the previous one on refresh, so when that old session
+refreshes, Claude Code writes the new pair back into the same Keychain slot the
+switcher just pointed at a different account. The live account flips back on its
+own, with nothing on screen to say why.
+
+Neither is fixable from here - only Claude Code can re-read its own credential.
+So the app says so instead. A card whose account is being spent by something
+else reads **In use by another session**, and switching while sessions are
+running asks first and says how many.
+
+Used deliberately this is a feature, not only a hazard: because sessions keep
+their account, you can run business work on one account and code generation on
+another at the same time, and neither blocks the other.
+
 ## Known limits
 
 - **A `/login` you run in the terminal revokes that account's saved session.** One

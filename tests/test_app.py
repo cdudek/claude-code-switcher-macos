@@ -176,6 +176,7 @@ class TestConnectorFooter:
         app = ClaudeSwitcherApp.__new__(ClaudeSwitcherApp)
         app._connectors_cache = cache
         app._connectors_at = {}
+        app._spent_elsewhere = set()
         app._live_active_ref = lambda provider: live_ref
         return app
 
@@ -325,3 +326,110 @@ class _FakeNSMenu:
 
     def addItem_(self, item):
         pass
+
+
+class TestInUseElsewhereLine:
+    """A session started before the switch keeps spending the account it was
+    launched with, because Claude Code reads its credential once at startup."""
+
+    def _app(self, spent, connectors=None):
+        from code_agent_switcher.app import ClaudeSwitcherApp
+        app = ClaudeSwitcherApp.__new__(ClaudeSwitcherApp)
+        app._connectors_cache = connectors or {}
+        app._connectors_at = {}
+        app._spent_elsewhere = spent
+        app._live_active_ref = lambda provider: "live@x.com"
+        return app
+
+    KEY = ("claude", "other@x.com")
+
+    def test_it_says_so_and_warns(self):
+        app = self._app({self.KEY})
+        assert app._connector_footer(self.KEY, False) == ("In use by another session", True)
+
+    def test_it_outranks_the_connector_count(self):
+        """The connector number is trivia next to a bill nobody can account
+        for."""
+        from code_agent_switcher.connectors import Connector
+        app = self._app({self.KEY}, {self.KEY: (Connector("Linear", "connected"),)})
+        assert app._connector_footer(self.KEY, False)[0] == "In use by another session"
+
+    def test_an_untouched_account_falls_through_to_connectors(self):
+        from code_agent_switcher.connectors import Connector
+        app = self._app(set(), {self.KEY: (Connector("Linear", "connected"),)})
+        assert app._connector_footer(self.KEY, False) == ("1 claude.ai connectors", False)
+
+
+class TestSwitchWarning:
+    """Those sessions hold the credential they started with, and one refreshing
+    its token can flip the live account back on its own."""
+
+    def _app(self, count):
+        from code_agent_switcher import app as app_mod
+        from code_agent_switcher.app import ClaudeSwitcherApp
+        app = ClaudeSwitcherApp.__new__(ClaudeSwitcherApp)
+        return app, app_mod
+
+    def test_no_running_sessions_switches_without_asking(self, monkeypatch):
+        app, mod = self._app(0)
+        monkeypatch.setattr(mod.sessions_api, "running_sessions", lambda: 0)
+        monkeypatch.setattr(mod.rumps, "alert", lambda **k: pytest.fail("should not ask"))
+        assert app._confirm_switch_with_running_sessions("claude") is True
+
+    def test_it_asks_when_a_session_is_running(self, monkeypatch):
+        app, mod = self._app(3)
+        seen = {}
+        monkeypatch.setattr(mod.sessions_api, "running_sessions", lambda: 3)
+        monkeypatch.setattr(mod.rumps, "alert", lambda **k: seen.update(k) or 1)
+        assert app._confirm_switch_with_running_sessions("claude") is True
+        assert "3 Claude Code sessions are running" in seen["message"]
+
+    def test_cancelling_stops_the_switch(self, monkeypatch):
+        app, mod = self._app(1)
+        monkeypatch.setattr(mod.sessions_api, "running_sessions", lambda: 1)
+        monkeypatch.setattr(mod.rumps, "alert", lambda **k: 0)
+        assert app._confirm_switch_with_running_sessions("claude") is False
+
+    def test_one_session_reads_as_singular(self, monkeypatch):
+        app, mod = self._app(1)
+        seen = {}
+        monkeypatch.setattr(mod.sessions_api, "running_sessions", lambda: 1)
+        monkeypatch.setattr(mod.rumps, "alert", lambda **k: seen.update(k) or 1)
+        app._confirm_switch_with_running_sessions("claude")
+        assert "1 Claude Code session is running" in seen["message"]
+
+    def test_codex_is_not_asked_about(self, monkeypatch):
+        """Only Claude Code holds a credential this way."""
+        app, mod = self._app(5)
+        monkeypatch.setattr(mod.sessions_api, "running_sessions",
+                            lambda: pytest.fail("should not be called"))
+        assert app._confirm_switch_with_running_sessions("codex") is True
+
+
+class TestSwitchHonoursTheWarning:
+    """Mutation note: deleting the confirm call from _switch_account passed the
+    whole suite - the function was tested, the call site was not."""
+
+    def _app(self, monkeypatch, answer):
+        from code_agent_switcher import app as app_mod
+        from code_agent_switcher.app import ClaudeSwitcherApp
+        app = ClaudeSwitcherApp.__new__(ClaudeSwitcherApp)
+        app._switch_in_progress = set()
+        app._live_active_ref = lambda provider: "someone-else@x.com"
+        monkeypatch.setattr(ClaudeSwitcherApp, "_confirm_switch_with_running_sessions",
+                            lambda self, provider: answer)
+        started = []
+        monkeypatch.setattr(app_mod.threading, "Thread",
+                            lambda **k: type("T", (), {"start": lambda s: started.append(k)})())
+        return app, started
+
+    def test_cancelling_the_warning_does_not_switch(self, monkeypatch):
+        app, started = self._app(monkeypatch, False)
+        app._switch_account("claude", "target@x.com")
+        assert started == []
+        assert app._switch_in_progress == set()
+
+    def test_confirming_goes_ahead(self, monkeypatch):
+        app, started = self._app(monkeypatch, True)
+        app._switch_account("claude", "target@x.com")
+        assert len(started) == 1
